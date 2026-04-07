@@ -1962,6 +1962,6 @@ if __name__ == "__main__":
     log.info("Starting SG Film Ajánló on port %d (debug=%s)", Config.FLASK_PORT, Config.FLASK_DEBUG)
     app.run(
         host="0.0.0.0",
-        port=Config.FLASK_PORT,
-        debug=Config.FLASK_DEBUG,
+        port=int(os.environ.get("port",10000)),
+        debug=False
     )
