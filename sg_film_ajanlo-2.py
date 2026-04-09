@@ -1842,21 +1842,18 @@ function bindButtons(scope){
         );
         const data = await res.json();
         const url = data.url || '';
-        // Ha watch?v= link → YouTube-on nyitja meg közvetlenül a videót
-        if(url.includes('watch?v=')){
-          window.open(url, '_blank', 'noopener');
+ 
+        if(url){
+          window.location.href = url;
         } else {
-          // Fallback: keresés
-          window.open(
-            'https://www.youtube.com/results?search_query='+encodeURIComponent(title+' '+year+' official trailer'),
-            '_blank','noopener'
-          );
+          window.location.href =
+            'https://www.youtube.com/results?search_query=' +
+            encodeURIComponent(title+' '+year+' official trailer');
         }
       } catch(e){
-        window.open(
-          'https://www.youtube.com/results?search_query='+encodeURIComponent(title+' trailer'),
-          '_blank','noopener'
-        );
+        window.location.href =
+          'https://www.youtube.com/results?search_query=' +
+          encodeURIComponent(title+' trailer');
       } finally {
         btn.textContent = orig;
         btn.disabled = false;
