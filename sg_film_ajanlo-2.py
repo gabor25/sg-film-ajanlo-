@@ -1307,6 +1307,9 @@ def api_chat():
             "édes és boldog": lambda: add_extra("romance happy love sweet"),
             "drámai és tragikus": lambda: add_extra("tragic romance drama"),
             "bonyolult kapcsolat": lambda: add_extra("complex relationship drama twist"),
+            "teljesen chill": lambda: add_extra("chill calm relaxing feel-good"),
+            "lassú, mély történet": lambda: add_extra("slow emotional drama human relationships"),
+            "könnyed feel-good": lambda: add_extra("feel-good light warm comedy"),
         }
 
         handled_by_button = False
@@ -2136,7 +2139,12 @@ async function loadMore(){
   if(!res.ok){
     throw new Error('Ajánlás API hiba. HTTP: '+res.status);
   }
-  const data = await res.json();
+  let data = {};
+  try{
+    data = await res.json();
+  }catch(parseErr){
+    throw new Error('Az ajánlás API nem JSON választ adott. HTTP: '+res.status);
+  }
   const pl=document.getElementById('pill-loaded');if(pl)pl.textContent=(data.total||0)+' film';
   const items = data.items||[];
   if(!items.length){
@@ -2194,18 +2202,25 @@ async function send(){
     statusLine.textContent='mood='+state.mood+' · time≈'+state.time+'min · mód='+state.brain
       +(state.q?' · '+state.q.slice(0,25):'');
 
-    if(state.ready){
-      state.offset=0;
-      posterStrip.innerHTML='';
-      try{
-        const count = await loadMore();
-        if(count>0){
-          // A filmek automatikusan megjelentek, nincs szükség külön „Több” gombra az első körhöz.
+    const shouldAutoLoad = !!state.ready || String(data.assistant||'').toLowerCase().includes('jönnek a filmek');
+    if(shouldAutoLoad){
+      state.ready = true;
+      state.offset = 0;
+      posterStrip.innerHTML = '<div class="empty-state">Ajánlások betöltése...</div>';
+
+      // Kis késleltetés: mobilon/Renderen stabilabb, mert a chat válasz DOM-frissítése után indul a filmlekérés.
+      setTimeout(async()=>{
+        try{
+          posterStrip.innerHTML = '';
+          const count = await loadMore();
+          if(count > 0){
+            posterStrip.scrollIntoView({behavior:'smooth', block:'start'});
+          }
+        }catch(loadErr){
+          console.error('Ajánlások automatikus betöltési hiba:', loadErr);
+          posterStrip.innerHTML = '<div class="empty-state">Az ajánlások nem töltődtek be automatikusan. Nyomj rá egyszer a Több gombra.</div>';
         }
-      }catch(loadErr){
-        console.error('Ajánlások betöltési hiba:', loadErr);
-        posterStrip.innerHTML = '<div class="empty-state">Most nem sikerült betölteni az ajánlásokat. Próbáld meg újra vagy nyomj a Több gombra.</div>';
-      }
+      }, 150);
     }
   }catch(e){
     if(typing && typing.remove) typing.remove();
