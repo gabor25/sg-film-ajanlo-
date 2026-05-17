@@ -449,6 +449,9 @@ def score_movie(m: Movie, mood: str, time_limit: int, brain: str, extra: str) ->
         for token in [t for t in extra.lower().replace(",", " ").split() if len(t) >= 3]:
             if token in blob:
                 score += cfg.KEYWORD_MATCH
+            # Részleges egyezés is számít
+            elif any(token in tag for tag in m.tags):
+                score += 1
  
     # Rating bonus — népszerű és jól értékelt filmek előnybe kerülnek
     if m.avg_rating >= 4.0 and m.rating_count >= 50:
@@ -683,7 +686,7 @@ def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int,
 # Session profile helpers
 # ---------------------------------------------------------------------------
 def default_profile() -> Dict[str, Any]:
-    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "genre_asked": False, "keyword_asked": False}
+    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "genre_asked": False, "keyword_asked": False, "company_asked": False, "ending_asked": False}
  
 def get_profile() -> Dict[str, Any]:
     p = session.get("profile")
@@ -719,14 +722,28 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
             }
             genres = genre_hints.get(mood, ["Dráma", "Akció", "Vígjáték", "Thriller"])
             return (
-                "Van kedvenc műfajod? Ha nem, leplek meg.",
-                genres + ["Lepj meg"],
+                "Van kedvenc műfajod?",
+                genres + ["Mindegy"],
             )
-        # 6. kérdés: kulcsszó
+        # 6. kérdés: egyedül vagy társasággal
+        if not p.get("company_asked"):
+            p["company_asked"] = True
+            return (
+                "Egyedül nézel filmet, vagy társasággal?",
+                ["Egyedül", "Párban", "Barátokkal", "Családdal"],
+            )
+        # 7. kérdés: befejezés típusa
+        if not p.get("ending_asked"):
+            p["ending_asked"] = True
+            return (
+                "Milyen befejezést szeretnél?",
+                ["Boldog befejezés", "Nyitott vég", "Csavaros befejezés", "Mindegy"],
+            )
+        # 8. kérdés: témák
         if not p.get("keyword_asked"):
             p["keyword_asked"] = True
             return (
-                "Van valami konkrét téma ami most vonz? Pl. maffia, időutazás, bosszú, barátság. Ha nincs, rögtön ajánlok.",
+                "Van konkrét téma ami most vonz? Pl. maffia, bosszú, szerelem, barátság, időutazás.",
                 ["Ajánlj most", "Reset"],
             )
         return (
@@ -744,7 +761,7 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
         ),
         "brain": (
             "Mennyire szeretnél gondolkodni? Pihenni akarsz, vagy kíváncsi vagy egy jó csavarra?",
-            ["Agykikapcsolas", "Kozepes", "Gondolkodtato"]
+            ["Agykikapcsolos", "Kozepes", "Elgondolkodtato"]
         ),
     }
     return dispatch.get(missing[0], ("Rendben.", []))
@@ -1254,14 +1271,23 @@ def api_chat():
         "felemelo":    lambda: p.update({"mood": "felemelo"}),
         "vicces":      lambda: p.update({"mood": "vicces"}),
         # Brain gombok
-        "agykikapcsolas":    lambda: p.update({"brain": "konnyu"}),
-        "kozepes":           lambda: p.update({"brain": "kozepes"}),
-        "gondolkodtato":     lambda: p.update({"brain": "elgondolkodtato"}),
+        "agykikapcsolos":      lambda: p.update({"brain": "konnyu"}),
+        "kozepes":             lambda: p.update({"brain": "kozepes"}),
+        "elgondolkodtato":     lambda: p.update({"brain": "elgondolkodtato"}),
         # Idő gombok
         "90 perc":              lambda: p.update({"time": 90}),
         "120 perc":             lambda: p.update({"time": 120}),
         "150 perc":             lambda: p.update({"time": 150}),
         "180 perc vagy több":   lambda: p.update({"time": 180}),
+        # Társaság gombok → extra kulcsszóba kerülnek
+        "egyedül":              lambda: p.update({"extra": (p.get("extra","")+" egyedül drama").strip()}),
+        "párban":               lambda: p.update({"extra": (p.get("extra","")+" romance love").strip()}),
+        "barátokkal":           lambda: p.update({"extra": (p.get("extra","")+" comedy fun action").strip()}),
+        "családdal":            lambda: p.update({"extra": (p.get("extra","")+" family animation").strip()}),
+        # Befejezés gombok
+        "boldog befejezés":     lambda: p.update({"extra": (p.get("extra","")+" happy ending feel-good").strip()}),
+        "nyitott vég":          lambda: p.update({"extra": (p.get("extra","")+" open ending drama").strip()}),
+        "csavaros befejezés":   lambda: p.update({"extra": (p.get("extra","")+" twist ending mystery").strip()}),
     }
     if low in _BUTTON_ACTIONS:
         _BUTTON_ACTIONS[low]()
@@ -1438,16 +1464,15 @@ body{
   margin-bottom:14px;
 }
 .mood-btn{
-  cursor:pointer;border:1px solid var(--border);background:rgba(14,18,24,.6);
-  border-radius:12px;padding:10px 6px;text-align:center;
-  transition:border-color .15s,background .15s,transform .1s;
-  -webkit-appearance:none;
+  cursor:pointer;border:1px solid rgba(30,39,48,.6);background:rgba(10,14,20,.4);
+  border-radius:14px;padding:10px 6px;text-align:center;
+  transition:all .2s;-webkit-appearance:none;
 }
-.mood-btn:hover{border-color:var(--gold);background:rgba(200,168,75,.08)}
-.mood-btn:active{transform:scale(.96)}
-.mood-btn.active{border-color:var(--gold);background:rgba(200,168,75,.12)}
-.mood-btn .emoji{font-size:22px;display:block;margin-bottom:4px}
-.mood-btn .label{font-size:11px;color:var(--muted);font-weight:600}
+.mood-btn:hover{border-color:rgba(200,168,75,.4);background:rgba(200,168,75,.06);transform:translateY(-1px)}
+.mood-btn:active{transform:scale(.97)}
+.mood-btn.active{border-color:var(--gold);background:rgba(200,168,75,.1);box-shadow:0 0 12px rgba(200,168,75,.1)}
+.mood-btn .emoji{font-size:20px;display:block;margin-bottom:4px}
+.mood-btn .label{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.3px}
 .mood-btn.active .label{color:var(--gold2)}
  
 /* ── Surprise button ── */
@@ -1464,28 +1489,36 @@ body{
  
 /* ── Chat ── */
 .chat-box{
-  background:rgba(8,10,14,.8);border:1px solid var(--border);
-  border-radius:14px;padding:12px;height:280px;
+  background:rgba(4,6,10,.4);border:none;
+  border-radius:12px;padding:12px;height:300px;
   overflow-y:auto;scroll-behavior:smooth;
 }
-@media(max-width:768px){.chat-box{height:220px}}
+@media(max-width:768px){.chat-box{height:200px}}
 .chat-box::-webkit-scrollbar{width:3px}
 .chat-box::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 .msg{display:flex;gap:8px;margin:10px 0;animation:fadeUp .2s ease}
 @keyframes fadeUp{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 .avatar{
-  width:28px;height:28px;border-radius:8px;border:1px solid var(--border2);
-  background:linear-gradient(145deg,#1a2230,#0c1018);
+  width:26px;height:26px;border-radius:8px;border:none;
+  background:linear-gradient(145deg,rgba(200,168,75,.15),rgba(200,168,75,.05));
   display:flex;align-items:center;justify-content:center;
   flex-shrink:0;font-size:9px;font-weight:700;color:var(--gold);
 }
-.msg.me .avatar{color:var(--muted)}
-.bubble{
-  max-width:82%;padding:9px 12px;border-radius:12px;
-  border:1px solid var(--border);background:rgba(14,18,24,.9);
-  line-height:1.5;white-space:pre-wrap;font-size:13px;
+.msg.me .avatar{
+  background:rgba(42,52,65,.4);
+  color:var(--muted);
 }
-.msg.me .bubble{margin-left:auto;background:rgba(28,36,52,.8);border-color:var(--border2)}
+.bubble{
+  max-width:80%;padding:10px 14px;border-radius:16px;
+  border:none;background:rgba(22,30,44,.9);
+  line-height:1.6;white-space:pre-wrap;font-size:13px;
+  box-shadow:0 1px 4px rgba(0,0,0,.3);
+}
+.msg.me .bubble{
+  margin-left:auto;
+  background:rgba(200,168,75,.12);
+  border:1px solid rgba(200,168,75,.2);
+}
 .typing-dots span{
   display:inline-block;width:4px;height:4px;border-radius:50%;
   background:var(--gold);margin:0 2px;animation:blink 1.2s infinite;
@@ -1497,9 +1530,9 @@ body{
 /* ── Chips ── */
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .chip{
-  cursor:pointer;border:1px solid var(--border);background:rgba(14,18,24,.7);
-  color:var(--text);padding:6px 11px;border-radius:999px;
-  font-size:12px;font-weight:500;transition:border-color .15s,background .15s;
+  cursor:pointer;border:1px solid rgba(42,52,65,.5);background:rgba(14,18,24,.5);
+  color:var(--muted);padding:6px 12px;border-radius:999px;
+  font-size:12px;font-weight:500;transition:all .15s;
   -webkit-appearance:none;
 }
 .chip:hover{border-color:var(--gold);background:rgba(200,168,75,.08);color:var(--gold2)}
@@ -1507,14 +1540,14 @@ body{
 /* ── Input row ── */
 .input-row{display:flex;gap:8px;margin-top:12px}
 .chat-input{
-  flex:1;min-width:0;padding:10px 13px;border-radius:12px;
-  border:1px solid var(--border2);background:rgba(8,10,14,.9);
+  flex:1;min-width:0;padding:11px 16px;border-radius:14px;
+  border:1px solid rgba(42,52,65,.6);background:rgba(8,10,14,.7);
   color:var(--text);font-family:var(--font-sans);font-size:14px;
-  outline:none;transition:border-color .15s;
+  outline:none;transition:border-color .2s,background .2s;
   -webkit-appearance:none;
 }
-.chat-input:focus{border-color:var(--gold)}
-.chat-input::placeholder{color:var(--faint)}
+.chat-input:focus{border-color:rgba(200,168,75,.5);background:rgba(10,14,20,.9)}
+.chat-input::placeholder{color:rgba(90,110,130,.6)}
  
 /* ── Status ── */
 .status-bar{
@@ -1683,22 +1716,18 @@ body{
  
   <!-- Chat card -->
   <div class="card">
-    <div class="card-head">
-      <div class="card-title">Asszisztens</div>
-      <button class="btn" id="btn-reset">↺ Reset</button>
+    <div class="card-head" style="border-bottom:1px solid rgba(30,39,48,.4)">
+      <div class="card-title" style="font-size:14px;letter-spacing:.5px;opacity:.9">Asszisztens</div>
+      <button class="btn" id="btn-reset" style="padding:5px 10px;font-size:11px;opacity:.5;border:none;background:transparent;color:var(--muted)">↺ Reset</button>
     </div>
-    <div class="card-body">
- 
-      <!-- Chat -->
+    <div class="card-body" style="padding:12px 14px">
       <div class="chat-box" id="chat-box"></div>
-      <div class="chips" id="chips"></div>
       <div class="input-row">
-        <input class="chat-input" id="inp" placeholder="pl. „feszült thriller 2 óra"" autocomplete="off"/>
-        <button class="btn" id="btn-send">➤</button>
+        <input class="chat-input" id="inp" placeholder="Írj valamit..." autocomplete="off"/>
+        <button class="btn" id="btn-send" style="padding:9px 16px;border-radius:12px">➤</button>
       </div>
- 
-      <!-- Mood selector -->
-      <div class="mood-grid" id="mood-grid" style="margin-top:12px">
+      <div class="chips" id="chips" style="margin-top:10px"></div>
+      <div class="mood-grid" id="mood-grid" style="margin-top:14px;gap:6px">
         <button class="mood-btn" data-mood="porgos"><span class="emoji">⚡</span><span class="label">Pörgős</span></button>
         <button class="mood-btn" data-mood="nyugis"><span class="emoji">😌</span><span class="label">Nyugis</span></button>
         <button class="mood-btn" data-mood="sotet"><span class="emoji">🌑</span><span class="label">Sötét</span></button>
@@ -1706,32 +1735,15 @@ body{
         <button class="mood-btn" data-mood="vicces"><span class="emoji">😂</span><span class="label">Vicces</span></button>
         <button class="mood-btn" data-mood="romantic"><span class="emoji">💕</span><span class="label">Romantikus</span></button>
       </div>
- 
-      <!-- Surprise me -->
-      <button class="surprise-btn" id="btn-surprise" style="margin-top:10px;margin-bottom:0">🎲 Lepj meg! — random film</button>
-      <div class="status-bar">
-        <div class="status-text" id="status-line">Válassz hangulatot vagy írj!</div>
-      </div>
-      <div class="footer-note">
-        Nem vagyunk stream oldal. A trailer YouTube-ra visz.
-      </div>
+      <button class="surprise-btn" id="btn-surprise" style="margin-top:10px;font-size:13px;padding:12px">🎲 Lepj meg — random film</button>
     </div>
   </div>
  
   <!-- Poster card -->
   <div class="card">
-    <div class="card-head" style="flex-wrap:wrap;gap:8px">
+    <div class="card-head">
       <div class="card-title">🎥 Ajánlott filmek</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <select id="era-filter" style="padding:5px 10px;border-radius:8px;border:1px solid var(--border2);background:rgba(14,18,24,.9);color:var(--text);font-size:12px;outline:none;cursor:pointer">
-          <option value="all">Minden kor</option>
-          <option value="new">Újabb (2010+)</option>
-          <option value="classic">Klasszikus (-2009)</option>
-          <option value="recent">Friss (2020+)</option>
-          <option value="old">Régi (-1990)</option>
-        </select>
-        <button class="btn" id="btn-more" style="padding:7px 12px;font-size:12px">+ Több</button>
-      </div>
+      <button class="btn" id="btn-more" style="padding:7px 12px;font-size:12px">+ Több</button>
     </div>
     <div class="card-body" style="padding:0">
       <div id="poster-strip"></div>
@@ -2173,17 +2185,6 @@ async function send(){
     console.error(e);
   }
 }
- 
-/* ── Era filter ── */
-document.getElementById('era-filter').addEventListener('change', async()=>{
-  const val = document.getElementById('era-filter').value;
-  state.era = val;
-  if(state.ready){
-    state.offset = 0;
-    posterStrip.innerHTML = '';
-    await loadMore();
-  }
-});
  
 /* ── Events ── */
 document.getElementById('btn-send').addEventListener('click',send);
