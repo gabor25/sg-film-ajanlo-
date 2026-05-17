@@ -271,11 +271,12 @@ if not MOVIES:
 # ---------------------------------------------------------------------------
 MOOD_SYNONYMS: Dict[str, List[str]] = {
     "porgos":      ["pörg", "akció", "gyors", "üldöz", "harc", "bosszú", "adrenalin", "darál"],
-    "nyugis":      ["nyugis", "chill", "feel", "laza", "szívmelenget", "romi", "romant"],
+    # Fontos: a nyugis ne tartalmazzon romantikus kulcsszavakat, különben összekeveri a két hangulatot.
+    "nyugis":      ["nyugis", "chill", "feel-good", "feelgood", "laza", "könnyed", "konnyed", "pihentető", "pihenteto", "szívmelenget"],
     "sotet":       ["söt", "sot", "thriller", "krimi", "parás", "nyomaszt", "gyilk", "pszich"],
     "felemelo":    ["felem", "motiv", "inspir", "pozit", "kitart", "remény", "remeny"],
     "vicces":      ["vicc", "kom", "nevet", "őrült", "orult", "paród", "parod", "humor"],
-    "romantic":    ["roman", "szerel", "romantic", "love", "randi", "pár", "par"],
+    "romantic":    ["roman", "romant", "romi", "szerel", "romantic", "love", "randi", "pár", "par"],
 }
  
 BRAIN_SYNONYMS: Dict[str, List[str]] = {
@@ -767,8 +768,8 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
                 ["Kicsit megható", "Nagyon érzelmes", "Inkább inspiráló", "Mindegy"]
             ),
             "nyugis": (
-                "Mennyire legyen romantikus? (kicsit romantikus / erős románc / emberi kapcsolatok / mindegy)",
-                ["Kicsit romantikus", "Erős románc", "Emberi kapcsolatok", "Mindegy"]
+                "Mennyire legyen könnyed és pihentető? (nagyon laza / kedves feel-good / emberi kapcsolatok / mindegy)",
+                ["Nagyon laza", "Kedves feel-good", "Emberi kapcsolatok", "Mindegy"]
             ),
             "romantic": (
                 "Milyen románcot szeretnél? (édes / tragikus / bonyolult / mindegy)",
@@ -1123,7 +1124,6 @@ def api_debug():
         "movies_loaded":    len(MOVIES),
         "sample_titles":    [m.title for m in MOVIES[:5]],
         "openai_available": bool(Config.OPENAI_API_KEY),
-        "mode":             "AI" if Config.OPENAI_API_KEY else "MVP",
         "model":            Config.OPENAI_MODEL,
     })
  
@@ -1163,9 +1163,6 @@ def api_nlu():
 # ---------------------------------------------------------------------------
 @app.get("/api/recs")
 def api_recs():
-    """Film ajánlások. API kulcs nélkül is működik MVP módban.
-    Ha később beállítod az OPENAI_API_KEY-t Renderen, a 'why' szöveg AI-val generálódik.
-    """
     try:
         mood  = request.args.get("mood", "porgos")
         brain = request.args.get("brain", "konnyu")
@@ -1173,54 +1170,41 @@ def api_recs():
         q      = request.args.get("q", "")
         offset = max(0, int(request.args.get("offset", "0")))
         take   = min(24, max(1, int(request.args.get("take", "12"))))
-        era    = request.args.get("era", "all").strip()
-
-        items = rank_movies(mood, time_limit, brain, q, offset, take, era)
-
-        # API kulcs nélkül ez automatikusan szabályalapú fallbacket használ.
-        why_map = batch_generate_why(items, mood, brain, q)
-
-        return jsonify({
-            "ok": True,
-            "mode": "AI" if Config.OPENAI_API_KEY else "MVP",
-            "total":  len(MOVIES),
-            "offset": offset,
-            "take":   take,
-            "items":  [
-                {
-                    "title":         m.title,
-                    "year":          m.year,
-                    "minutes":       m.minutes,
-                    "poster":        m.poster,
-                    "trailer":       m.trailer,
-                    "certification": m.certification,
-                    "why":           why_map.get(
-                                         f"{m.title}|{m.year}|{mood}|{brain}|{q[:20]}",
-                                         _why_rules(m, mood, brain, q)
-                                     ),
-                    "genres":        m.genres,
-                    "tags":          m.tags,
-                    "avg_rating":    m.avg_rating,
-                    "rating_count":  m.rating_count,
-                    "tmdb_id":       m.tmdb_id,
-                }
-                for m in items
-            ],
-        })
-    except Exception as exc:
-        log.exception("/api/recs hiba: %s", exc)
-        # Fontos: 200-zal térünk vissza, hogy a frontend ne 'hálózati hibának' mutassa.
-        return jsonify({
-            "ok": False,
-            "mode": "MVP",
-            "total": len(MOVIES),
-            "offset": 0,
-            "take": 0,
-            "items": [],
-            "error": str(exc),
-            "message": "Az ajánló MVP módban fut, de az ajánlások betöltése közben hiba történt."
-        }), 200
-
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": f"Invalid parameter: {exc}"}), 400
+ 
+    era = request.args.get("era", "all").strip()
+    items = rank_movies(mood, time_limit, brain, q, offset, take, era)
+ 
+    # Batch AI miért generálás — egy hívással az összes filmhez
+    why_map = batch_generate_why(items, mood, brain, q)
+ 
+    return jsonify({
+        "total":  len(MOVIES),
+        "offset": offset,
+        "take":   take,
+        "items":  [
+            {
+                "title":         m.title,
+                "year":          m.year,
+                "minutes":       m.minutes,
+                "poster":        m.poster,
+                "trailer":       m.trailer,
+                "certification": m.certification,
+                "why":           why_map.get(
+                                     f"{m.title}|{m.year}|{mood}|{brain}|{q[:20]}",
+                                     _why_rules(m, mood, brain, q)
+                                 ),
+                "genres":        m.genres,
+                "tags":          m.tags,
+                "avg_rating":    m.avg_rating,
+                "rating_count":  m.rating_count,
+                "tmdb_id":       m.tmdb_id,
+            }
+            for m in items
+        ],
+    })
+ 
 # ---------------------------------------------------------------------------
 # API: /api/chat
 # ---------------------------------------------------------------------------
@@ -1233,11 +1217,10 @@ def api_chat():
         low = user_msg.lower()
 
         if not user_msg:
-            # Belépéskor ne induljon el automatikusan a kérdéssor.
-            # Csak egy rövid köszönés jelenjen meg.
+            q, quick = next_question(p)
             session["profile"] = p
             session.modified = True
-            return jsonify({"assistant": "Szia.", "quick_replies": [], "profile": p})
+            return jsonify({"assistant": q, "quick_replies": quick, "profile": p})
 
         if low in _RESET_CMDS:
             session["profile"] = default_profile()
@@ -1316,6 +1299,8 @@ def api_chat():
             "kicsit megható": lambda: add_extra("drama inspiring uplifting"),
             "nagyon érzelmes": lambda: add_extra("emotional tearjerker drama"),
             "inkább inspiráló": lambda: add_extra("inspiring motivating triumph"),
+            "nagyon laza": lambda: add_extra("light chill feel-good"),
+            "kedves feel-good": lambda: add_extra("feel-good heartwarming gentle"),
             "kicsit romantikus": lambda: add_extra("romance subplot"),
             "erős románc": lambda: add_extra("romance love story"),
             "emberi kapcsolatok": lambda: add_extra("relationships drama friendship"),
@@ -1385,12 +1370,12 @@ def api_chat():
 
     except Exception as exc:
         log.exception("/api/chat hiba: %s", exc)
+        # A felhasználó ne lásson technikai Render/Python hibát a chatben.
+        p = default_profile()
         return jsonify({
-            "assistant": "MVP módban futok tovább. Valami megakadt a chatben, nyomj Resetet és próbáld újra.",
+            "assistant": "Valami megakadt, kezdjük újra nyugodtan.",
             "quick_replies": ["Reset"],
-            "profile": default_profile(),
-            "ready": False,
-            "error": str(exc),
+            "profile": p,
         }), 200
 
 # ---------------------------------------------------------------------------
@@ -1770,14 +1755,14 @@ body{
         <button class="btn" id="btn-send" style="padding:9px 16px;border-radius:12px">➤</button>
       </div>
       <div class="mood-grid" id="mood-grid" style="margin-top:14px;gap:6px">
-        <button class="mood-btn" data-mood="porgos"><span class="label">Pörgős</span></button>
-        <button class="mood-btn" data-mood="nyugis"><span class="label">Nyugis</span></button>
-        <button class="mood-btn" data-mood="sotet"><span class="label">Sötét</span></button>
-        <button class="mood-btn" data-mood="felemelo"><span class="label">Felemelő</span></button>
-        <button class="mood-btn" data-mood="vicces"><span class="label">Vicces</span></button>
-        <button class="mood-btn" data-mood="romantic"><span class="label">Romantikus</span></button>
+        <button class="mood-btn" data-mood="porgos"><span class="emoji">⚡</span><span class="label">Pörgős</span></button>
+        <button class="mood-btn" data-mood="nyugis"><span class="emoji">😌</span><span class="label">Nyugis</span></button>
+        <button class="mood-btn" data-mood="sotet"><span class="emoji">🌑</span><span class="label">Sötét</span></button>
+        <button class="mood-btn" data-mood="felemelo"><span class="emoji">🚀</span><span class="label">Felemelő</span></button>
+        <button class="mood-btn" data-mood="vicces"><span class="emoji">😂</span><span class="label">Vicces</span></button>
+        <button class="mood-btn" data-mood="romantic"><span class="emoji">💕</span><span class="label">Romantikus</span></button>
       </div>
-      <button class="surprise-btn" id="btn-surprise" style="margin-top:10px;font-size:13px;padding:12px">Lepj meg — random film</button>
+      <button class="surprise-btn" id="btn-surprise" style="margin-top:10px;font-size:13px;padding:12px">🎲 Lepj meg — random film</button>
     </div>
   </div>
  
@@ -1925,23 +1910,30 @@ document.getElementById('watchlist-panel').addEventListener('click',e=>{
     document.getElementById('watchlist-panel').classList.remove('open');
 });
  
-/* ── Mood buttons ──
-   Fontos: ezek már NEM töltenek filmet közvetlenül.
-   Ugyanúgy a chat /api/chat útvonalon mennek át, hogy végigfusson mind a 6 kérdés. */
-const moodLabels = {
-  'porgos':   'Pörgős',
-  'nyugis':   'Nyugis',
-  'sotet':    'Sötét',
-  'felemelo': 'Felemelő',
-  'vicces':   'Vicces',
-  'romantic': 'Romantikus',
+/* ── Mood buttons ── */
+const moodMessages = {
+  'porgos':   'Pörgős filmeket keresek neked.',
+  'nyugis':   'Nyugis, chill filmeket hozok.',
+  'sotet':    'Sötét, feszült filmek jönnek.',
+  'felemelo': 'Felemelő, motiváló filmeket keresek.',
+  'vicces':   'Vicces, könnyed filmeket hozok.',
+  'romantic': 'Romantikus filmeket keresek neked.',
 };
 document.querySelectorAll('.mood-btn').forEach(btn=>{
   btn.addEventListener('click', async ()=>{
     document.querySelectorAll('.mood-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     const mood = btn.dataset.mood;
-    inp.value = moodLabels[mood] || mood;
+    const labelMap = {
+      porgos: 'Pörgős',
+      nyugis: 'Nyugis',
+      sotet: 'Sötét',
+      felemelo: 'Felemelő',
+      vicces: 'Vicces',
+      romantic: 'Romantikus'
+    };
+    // Fontos: a hangulat gomb is a chat API-n keresztül menjen, különben átugorja a 6 kérdéses flow-t.
+    inp.value = labelMap[mood] || mood;
     await send();
   });
 });
@@ -2013,8 +2005,8 @@ function setChips(arr){
       const timeMap={'90 perc':90,'120 perc':120,'150 perc':150,'180 perc':180};
       if(timeMap[low]!==undefined){state.time=timeMap[low];inp.value=t;await send();return;}
       const moodMap={'pörgős':'porgos','nyugis':'nyugis','sötét':'sotet','felemelő':'felemelo','vicces':'vicces','romantikus':'romantic'};
-      if(moodMap[low]){document.querySelector('.mood-btn[data-mood="'+moodMap[low]+'"]')?.click();return;}
-      if(low==='meglepj'||low==='meglepő'||low==='meglepetés'||low==='lepj meg'){document.getElementById('btn-surprise').click();return;}
+      if(moodMap[low]){inp.value=t;await send();return;}
+      if(low==='meglepj'||low==='lepj meg'){document.getElementById('btn-surprise').click();return;}
       inp.value=t;await send();
     });
     chips.appendChild(c);
@@ -2072,7 +2064,7 @@ function posterHTML(m){
     +'<div class="poster-btns">'
     +'<button class="trailer-play-btn"'+'  data-url="'+esc(ytUrl)+'"'+'  data-embed="'+esc(ytEmbed)+'"'+'  data-title="'+esc(m.title)+'"'+'  data-year="'+esc(String(m.year||''))+'"'+'  data-tmdb="'+esc(String(m.tmdb_id||''))+'"'+'>▶ Trailer</button>'
     +'<button class="why-btn" data-title="'+esc(m.title)+'" data-why="'+esc(m.why||'')+'">? Miért</button>'
-    +'</div></div></div>';
+        +'</div></div></div>';
 }
  
 function bindButtons(scope){
@@ -2140,31 +2132,26 @@ async function loadMore(){
     +'&q='+encodeURIComponent(state.q||'')
     +'&era='+encodeURIComponent(state.era||'all')
     +'&offset='+state.offset+'&take='+state.take;
-  try{
-    const res  = await fetch(url);
-    let data = {};
-    try{ data = await res.json(); }
-    catch(parseErr){
-      console.error('Nem JSON /api/recs válasz:', parseErr);
-      data = {items:[], total:0, message:'Az ajánló MVP módban fut, de most nem kaptam olvasható választ.'};
-    }
-    const pl=document.getElementById('pill-loaded');if(pl)pl.textContent=(data.total||0)+' film';
-    if(data.ok === false && data.message){
-      console.warn('Recs API fallback:', data.message);
-    }
-    const items = data.items||[];
-    if(!items.length){
-      const el=document.createElement('div');
-      el.className='empty-state';el.textContent='Most nincs találat. Próbálj Resetet, vagy válassz más hangulatot.';
-      posterStrip.appendChild(el);return;
-    }
-    const chunk=document.createElement('div');
-    chunk.style.display='contents';
-    chunk.innerHTML=items.map(posterHTML).join('');
-    posterStrip.appendChild(chunk);
-    bindButtons(chunk);
-    state.offset+=items.length;
-  }catch(e){console.error('loadMore:',e)}
+  const res  = await fetch(url);
+  if(!res.ok){
+    throw new Error('Ajánlás API hiba. HTTP: '+res.status);
+  }
+  const data = await res.json();
+  const pl=document.getElementById('pill-loaded');if(pl)pl.textContent=(data.total||0)+' film';
+  const items = data.items||[];
+  if(!items.length){
+    const el=document.createElement('div');
+    el.className='empty-state';el.textContent='Nincs találat, próbálj más hangulatot vagy korszakot.';
+    posterStrip.appendChild(el);
+    return 0;
+  }
+  const chunk=document.createElement('div');
+  chunk.style.display='contents';
+  chunk.innerHTML=items.map(posterHTML).join('');
+  posterStrip.appendChild(chunk);
+  bindButtons(chunk);
+  state.offset+=items.length;
+  return items.length;
 }
  
 /* ── Send ── */
@@ -2190,13 +2177,12 @@ async function send(){
     typing.remove();
 
     if(!res.ok){
+      addMsg('SG', data.assistant || ('Szerverhiba történt. HTTP: '+res.status));
       console.error('Chat API error:', data);
       return;
     }
 
-    if(data.assistant){
-      addMsg('SG', data.assistant);
-    }
+    addMsg('SG',data.assistant||'…');
     setChips(data.quick_replies||[]);
     const prof=data.profile||{};
     if(prof.mood)  state.mood  = prof.mood;
@@ -2212,14 +2198,19 @@ async function send(){
       state.offset=0;
       posterStrip.innerHTML='';
       try{
-        await loadMore();
+        const count = await loadMore();
+        if(count>0){
+          // A filmek automatikusan megjelentek, nincs szükség külön „Több” gombra az első körhöz.
+        }
       }catch(loadErr){
-        console.error('loadMore after ready:', loadErr);
+        console.error('Ajánlások betöltési hiba:', loadErr);
+        posterStrip.innerHTML = '<div class="empty-state">Most nem sikerült betölteni az ajánlásokat. Próbáld meg újra vagy nyomj a Több gombra.</div>';
       }
     }
   }catch(e){
     if(typing && typing.remove) typing.remove();
-    console.error('send error:', e);
+    // Technikai hibaüzenetet nem írunk a chatbe, hogy a felhasználót ne riassza el.
+    console.error('Chat hiba:', e);
   }
 }
  
@@ -2270,14 +2261,9 @@ async function loadUser(){
 }
  
 /* ── Init ── */
-async function startChat(){
-  // Belépéskor csak köszönünk.
-  // A kérdéssor csak akkor indul el, amikor a felhasználó ír valamit.
-  addMsg('SG','Szia.');
-  setChips([]);
-}
 loadUser();
-startChat();
+addMsg('SG','Szia.');
+setChips(['90 perc','120 perc','180 perc','meglepj','Reset']);
 fetch('/api/debug').then(r=>r.json()).then(d=>{const p=document.getElementById('pill-loaded');if(p)p.textContent=(d.movies_loaded||0)+' film';}).catch(()=>{});
 })();
 </script>
