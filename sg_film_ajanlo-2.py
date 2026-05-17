@@ -27,7 +27,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
  
-from flask import Flask, jsonify, request, session
+from flask import Flask, jsonify, request, session, redirect, url_for
  
 # ---------------------------------------------------------------------------
 # Logging
@@ -69,6 +69,10 @@ class Config:
     FLASK_PORT: int     = int(os.getenv("FLASK_PORT", "5000"))
     FLASK_DEBUG: bool   = os.getenv("FLASK_DEBUG", "false").lower() == "true"
     SITE_PASSWORD: str  = os.getenv("SITE_PASSWORD", "").strip()
+    GOOGLE_CLIENT_ID:     str = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    GOOGLE_REDIRECT_URI:  str = os.getenv("GOOGLE_REDIRECT_URI",
+        "https://sg-film-ajanlo.onrender.com/auth/google/callback").strip()
  
     # Scoring weights
     TIME_CLOSE_10  = 10
@@ -641,27 +645,36 @@ def _why_rules(m: Movie, mood: str, brain: str, extra: str) -> str:
     return " ".join(sentences)
  
  
-def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int, take: int) -> List[Movie]:
+def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int, take: int, era: str = "all") -> List[Movie]:
+    # Era szűrés
+    era_filters = {
+        "recent":  lambda m: m.year >= 2015,
+        "new":     lambda m: 2000 <= m.year < 2015,
+        "classic": lambda m: 1980 <= m.year < 2000,
+        "old":     lambda m: 0 < m.year < 1980,
+        "all":     lambda m: True,
+    }
+    era_fn = era_filters.get(era, era_filters["all"])
+    pool = [m for m in MOVIES if era_fn(m)]
+ 
     # Minden filmhez kiszámoljuk a pontszámot
     scored = [
         (score_movie(m, mood, time_limit, brain, extra), m)
-        for m in MOVIES
+        for m in pool
     ]
  
     # Rendezés pontszám szerint
     scored.sort(key=lambda x: x[0], reverse=True)
  
-    # Minimum score: legalább 1 pontot kell kapni
-    # Ha extra kulcsszó van, szigorúbb szűrés
+    # Minimum score — szigorúbb szűrés
     if extra and extra.strip():
-        min_score = 2
+        min_score = 4
     else:
-        min_score = 1
- 
+        min_score = 2
     filtered = [m for score, m in scored if score >= min_score]
- 
-    # Ha túl kevés film maradt, lazítunk a szűrésen
-    if len(filtered) < take * 2:
+    if len(filtered) < take:
+        filtered = [m for score, m in scored if score >= 1]
+    if len(filtered) < take:
         filtered = [m for score, m in scored if score >= 0]
  
     return filtered[offset : offset + take]
@@ -670,7 +683,7 @@ def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int,
 # Session profile helpers
 # ---------------------------------------------------------------------------
 def default_profile() -> Dict[str, Any]:
-    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": []}
+    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "genre_asked": False, "keyword_asked": False}
  
 def get_profile() -> Dict[str, Any]:
     p = session.get("profile")
@@ -685,31 +698,69 @@ def missing_fields(p: Dict[str, Any]) -> List[str]:
 def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
     missing = missing_fields(p)
     if not missing:
+        # 4. kérdés: kor
+        if not p.get("era_asked"):
+            p["era_asked"] = True
+            return (
+                "Melyik korszakból szeretnél filmet nézni?",
+                ["Friss (2015 után)", "Modern (2000-2015)", "Klasszikus (1980-2000)", "Régi klasszikus (1980 előtt)", "Mindegy"],
+            )
+        # 5. kérdés: műfaj
+        if not p.get("genre_asked"):
+            p["genre_asked"] = True
+            mood = p.get("mood", "")
+            genre_hints = {
+                "porgos":   ["Akció", "Thriller", "Krimi", "Kaland", "Háborús"],
+                "sotet":    ["Horror", "Thriller", "Misztikus", "Krimi", "Pszichológiai"],
+                "vicces":   ["Vígjáték", "Animáció", "Paródia", "Romantikus vígjáték"],
+                "felemelo": ["Dráma", "Életrajz", "Sport", "Zenés", "Történelmi"],
+                "nyugis":   ["Romantikus", "Vígjáték", "Családi", "Dráma"],
+                "romantic": ["Romantikus dráma", "Romantikus vígjáték", "Szerelmes film"],
+            }
+            genres = genre_hints.get(mood, ["Dráma", "Akció", "Vígjáték", "Thriller"])
+            return (
+                "Van kedvenc műfajod? Ha nem, leplek meg.",
+                genres + ["Lepj meg"],
+            )
+        # 6. kérdés: kulcsszó
+        if not p.get("keyword_asked"):
+            p["keyword_asked"] = True
+            return (
+                "Van valami konkrét téma ami most vonz? Pl. maffia, időutazás, bosszú, barátság. Ha nincs, rögtön ajánlok.",
+                ["Ajánlj most", "Reset"],
+            )
         return (
-            'Oké, megvan minden. Finomítsunk: írj 1-2 kulcsszót (pl. maffia / űr / csavaros / bosszú) vagy nyomj „Ajánlj"-t.',
-            ["Ajánlj", "Újra dobás", "Sötétebb", "Viccesebb", "Rövidebb", "Reset"],
+            "Megvan minden. Jönnek a filmek.",
+            ["Ajánlj most", "Reset"],
         )
     dispatch = {
-        "mood":  ("Milyen hangulatot szeretnél? (pörgős / nyugis / sötét / felemelő / vicces)",
-                  ["pörgős", "nyugis", "sötét", "felemelő", "vicces"]),
-        "time":  ("Mennyi időd van ma filmre? (90 / 120 / 180 perc)",
-                  ["90 perc", "120 perc", "180 perc"]),
-        "brain": ("Mennyire legyen elgondolkodtató? (könnyű / közepes / elgondolkodtató)",
-                  ["könnyű", "közepes", "elgondolkodtató"]),
+        "mood":  (
+            "Milyen hangulatban vagy ma este?",
+            ["Porgos", "Nyugis", "Sotet", "Felemelo", "Vicces", "Romantikus"]
+        ),
+        "time":  (
+            "Mennyi időd van ma filmre?",
+            ["90 perc", "120 perc", "150 perc", "180 perc vagy több"]
+        ),
+        "brain": (
+            "Mennyire szeretnél gondolkodni? Pihenni akarsz, vagy kíváncsi vagy egy jó csavarra?",
+            ["Agykikapcsolas", "Kozepes", "Gondolkodtato"]
+        ),
     }
-    return dispatch.get(missing[0], ("Oké.", []))
+    return dispatch.get(missing[0], ("Rendben.", []))
  
 # ---------------------------------------------------------------------------
 # Optional OpenAI chat reply
 # ---------------------------------------------------------------------------
 _CHAT_SYSTEM_PROMPT = (
     "Te egy magyar nyelvű filmes ajánló asszisztens vagy (SG Film Ajánló). "
-    "Cél: barátságos, rövid, mégis 'AI-s' beszélgetés. "
-    "NE ajánlj rögtön filmeket 'szia' üzenetre. Először hiányzó adatokat kérdezz ki: "
-    "idő (90/120/180), hangulat, elgondolkodtatóság. "
-    "Ha már mind megvan, kérj extra kulcsszót, vagy ajánlj. "
-    "Stílus: sötét elegancia, laza, motiváló, 1-2 emoji max. "
-    "Soha ne állítsd, hogy stream oldalak vagytok."
+    "Cél: barátságos, természetes beszélgetés — mintha egy filmes barát ajánlana. "
+    "NE ajánlj rögtön filmeket. Először kérdezd ki sorban: hangulat, idő, gondolkodtatóság, korszak, műfaj, téma. "
+    "Minden kérdést külön tedd fel, ne egyszerre. Várj a válaszra. "
+    "Kérdések stílusa: rövid, természetes, emoji NÉLKÜL — max egy emoji a mondat végén. "
+    "Ha már minden megvan, mondd hogy jönnek a filmek. "
+    "Soha ne állítsd hogy stream oldal vagytok. "
+    "Ha a felhasználó ír egy témát (pl. maffia, szerelem), azt extra kulcsszóként kezeld."
 )
  
 def openai_chat_reply(p: Dict[str, Any], user_msg: str) -> Optional[str]:
@@ -751,6 +802,107 @@ def openai_chat_reply(p: Dict[str, Any], user_msg: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 app.secret_key = Config.FLASK_SECRET or "SG_INSECURE_FALLBACK_CHANGE_ME"
+ 
+# ---------------------------------------------------------------------------
+# Google OAuth — bejelentkezés
+# ---------------------------------------------------------------------------
+import urllib.request as _ureq
+import urllib.parse as _uparse
+import json as _json
+import hashlib, secrets
+ 
+def _google_auth_url(state: str) -> str:
+    params = {
+        "client_id":     Config.GOOGLE_CLIENT_ID,
+        "redirect_uri":  Config.GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "state":         state,
+        "access_type":   "online",
+    }
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + _uparse.urlencode(params)
+ 
+def _exchange_code(code: str) -> Optional[Dict[str, Any]]:
+    """Authorization code → access token → user info."""
+    try:
+        # Token csere
+        token_data = _uparse.urlencode({
+            "code":          code,
+            "client_id":     Config.GOOGLE_CLIENT_ID,
+            "client_secret": Config.GOOGLE_CLIENT_SECRET,
+            "redirect_uri":  Config.GOOGLE_REDIRECT_URI,
+            "grant_type":    "authorization_code",
+        }).encode()
+        req = _ureq.Request(
+            "https://oauth2.googleapis.com/token",
+            data=token_data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with _ureq.urlopen(req, timeout=10) as resp:
+            tokens = _json.loads(resp.read())
+ 
+        access_token = tokens.get("access_token")
+        if not access_token:
+            return None
+ 
+        # User info lekérése
+        req2 = _ureq.Request(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": "Bearer " + access_token},
+        )
+        with _ureq.urlopen(req2, timeout=10) as resp2:
+            return _json.loads(resp2.read())
+    except Exception as exc:
+        log.warning("Google OAuth exchange failed: %s", exc)
+        return None
+ 
+@app.get("/auth/google")
+def auth_google():
+    if not Config.GOOGLE_CLIENT_ID:
+        return jsonify({"error": "Google OAuth nincs beállítva"}), 500
+    state = secrets.token_hex(16)
+    session["oauth_state"] = state
+    return redirect(_google_auth_url(state))
+ 
+@app.get("/auth/google/callback")
+def auth_google_callback():
+    error = request.args.get("error")
+    if error:
+        log.warning("Google OAuth error: %s", error)
+        return redirect("/?error=auth_failed")
+ 
+    state = request.args.get("state", "")
+    if state != session.get("oauth_state", ""):
+        return redirect("/?error=state_mismatch")
+ 
+    code = request.args.get("code", "")
+    if not code:
+        return redirect("/?error=no_code")
+ 
+    user_info = _exchange_code(code)
+    if not user_info:
+        return redirect("/?error=token_failed")
+ 
+    # Felhasználó bejelentkeztetése
+    session["user"] = {
+        "id":      user_info.get("sub", ""),
+        "email":   user_info.get("email", ""),
+        "name":    user_info.get("name", ""),
+        "picture": user_info.get("picture", ""),
+    }
+    session.pop("oauth_state", None)
+    log.info("Google login: %s", user_info.get("email"))
+    return redirect("/")
+ 
+@app.get("/auth/logout")
+def auth_logout():
+    session.pop("user", None)
+    return redirect("/")
+ 
+@app.get("/api/me")
+def api_me():
+    user = session.get("user")
+    return jsonify({"user": user, "logged_in": bool(user)})
  
 # ---------------------------------------------------------------------------
 # Jelszóvédelem (opcionális — ha SITE_PASSWORD be van állítva a .env-ben)
@@ -885,6 +1037,27 @@ def api_trailer():
     return jsonify({"url": yt_search})
  
 # ---------------------------------------------------------------------------
+# API: /api/justwatch — JustWatch keresési link generálás
+# ---------------------------------------------------------------------------
+@app.get("/api/justwatch")
+def api_justwatch():
+    from urllib.parse import quote as _quote
+    title = request.args.get("title", "").strip()
+    year  = request.args.get("year", "").strip()
+    if not title:
+        return jsonify({"url": ""}), 400
+ 
+    # JustWatch magyar keresési URL
+    query = title + (" " + year if year else "")
+    jw_url = "https://www.justwatch.com/hu/kereses?q=" + _quote(title)
+ 
+    return jsonify({
+        "url":      jw_url,
+        "title":    title,
+        "year":     year,
+    })
+ 
+# ---------------------------------------------------------------------------
 # API: /api/poster  — TMDB képek proxyzása (böngésző blokk megkerülése)
 # ---------------------------------------------------------------------------
 @app.get("/api/poster")
@@ -969,7 +1142,8 @@ def api_recs():
     except (ValueError, TypeError) as exc:
         return jsonify({"error": f"Invalid parameter: {exc}"}), 400
  
-    items = rank_movies(mood, time_limit, brain, q, offset, take)
+    era = request.args.get("era", "all").strip()
+    items = rank_movies(mood, time_limit, brain, q, offset, take, era)
  
     # Batch AI miért generálás — egy hívással az összes filmhez
     why_map = batch_generate_why(items, mood, brain, q)
@@ -1053,17 +1227,45 @@ def api_chat():
  
     # Quick action buttons
     _BUTTON_ACTIONS: Dict[str, Any] = {
-        "sötétebb":  lambda: p.update({"mood": "sotet"}),
-        "sotetebb":  lambda: p.update({"mood": "sotet"}),
-        "viccesebb": lambda: p.update({"mood": "vicces"}),
-        "rövidebb":  lambda: p.update({"time": 90}),
-        "rovidebb":  lambda: p.update({"time": 90}),
-        "ajánlj":    lambda: p.update({"ready": True}),
-        "ajanlj":    lambda: p.update({"ready": True}),
-        "romantikus": lambda: p.update({"mood": "romantic"}),
-        # ── FIX: "újra dobás" button resets offset but keeps profile ready ──
-        "újra dobás": lambda: p.update({"ready": True}),
-        "ujra dobas": lambda: p.update({"ready": True}),
+        "sötétebb":           lambda: p.update({"mood": "sotet"}),
+        "sotetebb":           lambda: p.update({"mood": "sotet"}),
+        "viccesebb":          lambda: p.update({"mood": "vicces"}),
+        "rövidebb":           lambda: p.update({"time": 90}),
+        "rovidebb":           lambda: p.update({"time": 90}),
+        "ajánlj":             lambda: p.update({"ready": True}),
+        "ajanlj":             lambda: p.update({"ready": True}),
+        "ajánlj most!":       lambda: p.update({"ready": True}),
+        "romantikus":         lambda: p.update({"mood": "romantic"}),
+        "újra dobás":         lambda: p.update({"ready": True}),
+        "ujra dobas":         lambda: p.update({"ready": True}),
+        # Kor választók
+        "friss (2015 után)":              lambda: p.update({"era": "recent"}),
+        "friss film (2015 utáni)":        lambda: p.update({"era": "recent"}),
+        "modern (2000-2015)":             lambda: p.update({"era": "new"}),
+        "klasszikus (1980-2000)":         lambda: p.update({"era": "classic"}),
+        "régi klasszikus (1980 előtt)":   lambda: p.update({"era": "old"}),
+        "mindegy":                        lambda: p.update({"era": "all"}),
+        "mindegy, lepj meg":              lambda: p.update({"era": "all", "ready": True}),
+        "lepj meg":                       lambda: p.update({"ready": True}),
+        "meglepetés legyen":              lambda: p.update({"ready": True}),
+        "ajánlj most":                    lambda: p.update({"ready": True}),
+        "ajánlj most!":                   lambda: p.update({"ready": True}),
+        "ujra dobas":                     lambda: p.update({"ready": True}),
+        # Hangulat gombok
+        "porgos":      lambda: p.update({"mood": "porgos"}),
+        "nyugis":      lambda: p.update({"mood": "nyugis"}),
+        "sotet":       lambda: p.update({"mood": "sotet"}),
+        "felemelo":    lambda: p.update({"mood": "felemelo"}),
+        "vicces":      lambda: p.update({"mood": "vicces"}),
+        # Brain gombok
+        "agykikapcsolas":    lambda: p.update({"brain": "konnyu"}),
+        "kozepes":           lambda: p.update({"brain": "kozepes"}),
+        "gondolkodtato":     lambda: p.update({"brain": "elgondolkodtato"}),
+        # Idő gombok
+        "90 perc":              lambda: p.update({"time": 90}),
+        "120 perc":             lambda: p.update({"time": 120}),
+        "150 perc":             lambda: p.update({"time": 150}),
+        "180 perc vagy több":   lambda: p.update({"time": 180}),
     }
     if low in _BUTTON_ACTIONS:
         _BUTTON_ACTIONS[low]()
@@ -1382,14 +1584,16 @@ body{
 .poster-meta{color:var(--muted);font-size:10px;margin-bottom:7px}
 .poster-btns{display:flex;gap:5px}
 .poster-btns a,.poster-btns button{
-  flex:1;text-align:center;padding:6px 4px;border-radius:8px;
+  flex:1;text-align:center;padding:5px 3px;border-radius:8px;
   border:1px solid var(--border);background:rgba(14,18,24,.6);
-  color:var(--text);text-decoration:none;font-size:10px;font-weight:600;
+  color:var(--text);text-decoration:none;font-size:9.5px;font-weight:600;
   transition:border-color .15s,background .15s;cursor:pointer;
   font-family:var(--font-sans);-webkit-appearance:none;
 }
 .poster-btns a:hover,.poster-btns button:hover{border-color:var(--gold);background:rgba(200,168,75,.08)}
 .poster-btns .why-btn{color:var(--gold)}
+.poster-btns .jw-btn{color:#00d8ff;border-color:rgba(0,216,255,.2);background:rgba(0,216,255,.05)}
+.poster-btns .jw-btn:hover{border-color:#00d8ff;background:rgba(0,216,255,.12)}
 .empty-state{grid-column:1/-1;padding:28px;text-align:center;color:var(--muted);font-size:13px}
  
 /* ── Watchlist panel ── */
@@ -1474,6 +1678,7 @@ body{
     <div id="pill-loaded" style="font-size:11px;color:var(--gold);font-weight:600"></div>
     <div style="font-size:11px;color:var(--muted)">🚫 Nem stream oldal</div>
     <button class="btn" id="btn-watchlist" style="padding:7px 12px;font-size:12px">🔖 Lista</button>
+    <div id="user-area"></div>
   </div>
 </div>
  
@@ -1483,7 +1688,7 @@ body{
   <!-- Chat card -->
   <div class="card">
     <div class="card-head">
-      <div class="card-title">🤖 AI Asszisztens</div>
+      <div class="card-title">Asszisztens</div>
       <button class="btn" id="btn-reset">↺ Reset</button>
     </div>
     <div class="card-body">
@@ -1519,9 +1724,18 @@ body{
  
   <!-- Poster card -->
   <div class="card">
-    <div class="card-head">
+    <div class="card-head" style="flex-wrap:wrap;gap:8px">
       <div class="card-title">🎥 Ajánlott filmek</div>
-      <button class="btn" id="btn-more">+ Tölts még</button>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="era-filter" style="padding:5px 10px;border-radius:8px;border:1px solid var(--border2);background:rgba(14,18,24,.9);color:var(--text);font-size:12px;outline:none;cursor:pointer">
+          <option value="all">Minden kor</option>
+          <option value="new">Újabb (2010+)</option>
+          <option value="classic">Klasszikus (-2009)</option>
+          <option value="recent">Friss (2020+)</option>
+          <option value="old">Régi (-1990)</option>
+        </select>
+        <button class="btn" id="btn-more" style="padding:7px 12px;font-size:12px">+ Több</button>
+      </div>
     </div>
     <div class="card-body" style="padding:0">
       <div id="poster-strip"></div>
@@ -1577,7 +1791,7 @@ body{
 'use strict';
  
 /* ── State ── */
-let state = {mood:'porgos',brain:'konnyu',time:120,q:'',offset:0,take:12,ready:false};
+let state = {mood:'porgos',brain:'konnyu',time:120,q:'',offset:0,take:6,ready:false,era:'all'};
 let watchlist = JSON.parse(localStorage.getItem('sg_watchlist') || '[]');
  
 /* ── Refs ── */
@@ -1663,12 +1877,12 @@ document.getElementById('watchlist-panel').addEventListener('click',e=>{
  
 /* ── Mood buttons ── */
 const moodMessages = {
-  'porgos':   '⚡ Pörgős filmeket keresek neked!',
-  'nyugis':   '😌 Nyugis, chill filmeket hozok!',
-  'sotet':    '🌑 Sötét, feszült filmek jönnek!',
-  'felemelo': '🚀 Felemelő, motiváló filmeket keresek!',
-  'vicces':   '😂 Vicces, könnyed filmeket hozok!',
-  'romantic': '💕 Romantikus filmeket keresek neked!',
+  'porgos':   'Pörgős filmeket keresek neked.',
+  'nyugis':   'Nyugis, chill filmeket hozok.',
+  'sotet':    'Sötét, feszült filmek jönnek.',
+  'felemelo': 'Felemelő, motiváló filmeket keresek.',
+  'vicces':   'Vicces, könnyed filmeket hozok.',
+  'romantic': 'Romantikus filmeket keresek neked.',
 };
 document.querySelectorAll('.mood-btn').forEach(btn=>{
   btn.addEventListener('click', async ()=>{
@@ -1814,6 +2028,7 @@ function posterHTML(m){
     +'<div class="poster-btns">'
     +'<button class="trailer-play-btn"'+'  data-url="'+esc(ytUrl)+'"'+'  data-embed="'+esc(ytEmbed)+'"'+'  data-title="'+esc(m.title)+'"'+'  data-year="'+esc(String(m.year||''))+'"'+'  data-tmdb="'+esc(String(m.tmdb_id||''))+'"'+'>▶ Trailer</button>'
     +'<button class="why-btn" data-title="'+esc(m.title)+'" data-why="'+esc(m.why||'')+'">? Miért</button>'
+    +'<button class="jw-btn" data-title="'+esc(m.title)+'" data-year="'+esc(String(m.year||''))+'">📺 Hol?</button>'
     +'</div></div></div>';
 }
  
@@ -1842,18 +2057,46 @@ function bindButtons(scope){
         );
         const data = await res.json();
         const url = data.url || '';
- 
-        if(url){
-          window.location.href = url;
+        // Ha watch?v= link → YouTube-on nyitja meg közvetlenül a videót
+        if(url.includes('watch?v=')){
+          window.open(url, '_blank', 'noopener');
         } else {
-          window.location.href =
-            'https://www.youtube.com/results?search_query=' +
-            encodeURIComponent(title+' '+year+' official trailer');
+          // Fallback: keresés
+          window.open(
+            'https://www.youtube.com/results?search_query='+encodeURIComponent(title+' '+year+' official trailer'),
+            '_blank','noopener'
+          );
         }
       } catch(e){
-        window.location.href =
-          'https://www.youtube.com/results?search_query=' +
-          encodeURIComponent(title+' trailer');
+        window.open(
+          'https://www.youtube.com/results?search_query='+encodeURIComponent(title+' trailer'),
+          '_blank','noopener'
+        );
+      } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
+      }
+    });
+  });
+  scope.querySelectorAll('.jw-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const title = btn.dataset.title;
+      const year  = btn.dataset.year || '';
+      const orig  = btn.textContent;
+      btn.textContent = '⏳';
+      btn.disabled = true;
+      try {
+        const res = await fetch(
+          '/api/justwatch?title='+encodeURIComponent(title)
+          +'&year='+encodeURIComponent(year)
+        );
+        const data = await res.json();
+        if(data.url) window.open(data.url, '_blank', 'noopener');
+      } catch(e){
+        window.open(
+          'https://www.justwatch.com/hu/kereses?q='+encodeURIComponent(title),
+          '_blank','noopener'
+        );
       } finally {
         btn.textContent = orig;
         btn.disabled = false;
@@ -1877,6 +2120,7 @@ async function loadMore(){
     +'&brain='+encodeURIComponent(state.brain)
     +'&time='+encodeURIComponent(state.time)
     +'&q='+encodeURIComponent(state.q||'')
+    +'&era='+encodeURIComponent(state.era||'all')
     +'&offset='+state.offset+'&take='+state.take;
   try{
     const res  = await fetch(url);
@@ -1914,10 +2158,11 @@ async function send(){
     addMsg('SG',data.assistant||'…');
     setChips(data.quick_replies||[]);
     const prof=data.profile||{};
-    if(prof.mood) state.mood=prof.mood;
-    if(prof.brain)state.brain=prof.brain;
-    if(prof.time) state.time=Number(prof.time)||state.time;
-    state.q=prof.extra||'';
+    if(prof.mood)  state.mood  = prof.mood;
+    if(prof.brain) state.brain = prof.brain;
+    if(prof.time)  state.time  = Number(prof.time)||state.time;
+    if(prof.era)   state.era   = prof.era;
+    state.q = prof.extra||'';
     const wasReady=state.ready;
     state.ready=!!prof.ready;
     statusLine.textContent='mood='+state.mood+' · time≈'+state.time+'min · mód='+state.brain
@@ -1933,14 +2178,48 @@ async function send(){
   }
 }
  
+/* ── Era filter ── */
+document.getElementById('era-filter').addEventListener('change', async()=>{
+  const val = document.getElementById('era-filter').value;
+  state.era = val;
+  if(state.ready){
+    state.offset = 0;
+    posterStrip.innerHTML = '';
+    await loadMore();
+  }
+});
+ 
 /* ── Events ── */
 document.getElementById('btn-send').addEventListener('click',send);
 document.getElementById('btn-reset').addEventListener('click',()=>{inp.value='Reset';send()});
 document.getElementById('btn-more').addEventListener('click',loadMore);
 inp.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
  
+/* ── User area ── */
+async function loadUser(){
+  try{
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    const area = document.getElementById('user-area');
+    if(data.logged_in && data.user){
+      area.innerHTML =
+        '<div style="display:flex;align-items:center;gap:8px">'
+        +'<img src="'+data.user.picture+'" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border2)" onerror="this.style.display='none'">'
+        +'<span style="font-size:12px;color:var(--text)">'+data.user.name.split(' ')[0]+'</span>'
+        +'<a href="/auth/logout" style="font-size:11px;color:var(--muted);text-decoration:none;border:1px solid var(--border);padding:4px 8px;border-radius:8px">Kilépés</a>'
+        +'</div>';
+    } else {
+      area.innerHTML =
+        '<a href="/auth/google" style="display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:12px;border:1px solid var(--border2);background:linear-gradient(145deg,#1c2840,#0c1020);color:var(--text);text-decoration:none;font-size:12px;font-weight:600">'
+        +'<img src="https://www.google.com/favicon.ico" style="width:14px;height:14px"> Google bejelentkezés'
+        +'</a>';
+    }
+  }catch(e){ console.error(e); }
+}
+ 
 /* ── Init ── */
-addMsg('SG','Szia! 👋 Válassz hangulatot a gombokkal, vagy írj mit szeretnél nézni.');
+loadUser();
+addMsg('SG','Szia! Válassz hangulatot a gombokkal, vagy írd le mit szeretnél nézni.');
 setChips(['90 perc','120 perc','180 perc','meglepj','Reset']);
 fetch('/api/debug').then(r=>r.json()).then(d=>{const p=document.getElementById('pill-loaded');if(p)p.textContent=(d.movies_loaded||0)+' film';}).catch(()=>{});
 })();
@@ -1958,7 +2237,7 @@ def home():
 if __name__ == "__main__":
     log.info("Starting SG Film Ajánló on port %d (debug=%s)", Config.FLASK_PORT, Config.FLASK_DEBUG)
     app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("port",10000)),
-        debug=False
+        host="127.0.0.1",
+        port=Config.FLASK_PORT,
+        debug=Config.FLASK_DEBUG,
     )
