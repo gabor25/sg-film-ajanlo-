@@ -3,11 +3,11 @@ SG Film Ajánló — v2 (improved)
 ================================
 A Hungarian AI movie recommender powered by Flask.
 Supports offline NLU + optional OpenAI profile extraction.
-
+ 
 Run:
     pip install flask openai   # openai is optional
     python sg_film_ajanlo.py
-
+ 
 Config via .env:
     OPENAI_API_KEY=sk-...
     OPENAI_MODEL=gpt-4o-mini   (default)
@@ -15,9 +15,9 @@ Config via .env:
     FLASK_PORT=5000
     FLASK_DEBUG=false
 """
-
+ 
 from __future__ import annotations
-
+ 
 import csv
 import json
 import logging
@@ -26,9 +26,9 @@ import random
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
-
+ 
 from flask import Flask, jsonify, request, session, redirect, url_for
-
+ 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("sg_film")
-
+ 
 # ---------------------------------------------------------------------------
 # Minimal .env loader (no extra dependencies)
 # ---------------------------------------------------------------------------
@@ -56,9 +56,9 @@ def _load_dotenv(path: str = ".env") -> None:
                 os.environ.setdefault(key.strip(), val)
     except OSError as exc:
         log.warning("Could not read .env: %s", exc)
-
+ 
 _load_dotenv()
-
+ 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ class Config:
     GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
     GOOGLE_REDIRECT_URI:  str = os.getenv("GOOGLE_REDIRECT_URI",
         "https://sg-film-ajanlo.onrender.com/auth/google/callback").strip()
-
+ 
     # Scoring weights
     TIME_CLOSE_10  = 10
     TIME_CLOSE_25  =  7
@@ -85,13 +85,13 @@ class Config:
     BRAIN_PENALTY  = -2
     KEYWORD_MATCH  =  2
     RANDOM_BONUS   =  2   # randint(0, RANDOM_BONUS)
-
+ 
 if not Config.FLASK_SECRET:
     log.warning(
         "FLASK_SECRET is not set — using an insecure fallback. "
         "Set FLASK_SECRET in your .env for production."
     )
-
+ 
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ class Movie:
     avg_rating:    float = 0.0  # MovieLens átlagértékelés
     rating_count:  int   = 0    # értékelések száma
     tmdb_id:       str = ""     # TMDB azonosító
-
+ 
 # ---------------------------------------------------------------------------
 # CSV loading
 # ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 CSV_CLEAN = os.path.join(BASE_DIR, "movies_clean.csv")
 CSV_RAW   = os.path.join(BASE_DIR, "movies.csv")
 CSV_PATH  = CSV_CLEAN if os.path.exists(CSV_CLEAN) else CSV_RAW
-
+ 
 _FIELD_ALIASES: Dict[str, List[str]] = {
     "title":         ["title", "Title"],
     "year":          ["year", "Year"],
@@ -129,7 +129,7 @@ _FIELD_ALIASES: Dict[str, List[str]] = {
     "trailer":       ["trailer"],
     "certification": ["certification", "Certification"],
 }
-
+ 
 def _first(row: Dict[str, str], *keys: str) -> str:
     """Return the first non-empty value from a CSV row by key priority."""
     for k in keys:
@@ -137,28 +137,28 @@ def _first(row: Dict[str, str], *keys: str) -> str:
         if v:
             return v.strip()
     return ""
-
+ 
 def _to_int(value: Any, default: int = 0) -> int:
     try:
         s = str(value).strip()
         return int(float(s)) if s else default
     except (ValueError, TypeError):
         return default
-
+ 
 def _split_pipe(value: Any) -> List[str]:
     return [p.strip().lower() for p in str(value or "").split("|") if p.strip()]
-
+ 
 def _detect_delimiter(first_line: str) -> str:
     candidates = [";", ",", "\t"]
     counts = {c: first_line.count(c) for c in candidates}
     return max(counts, key=counts.get) if first_line else ","
-
+ 
 def load_movies_csv(path: str) -> List[Movie]:
     movies: List[Movie] = []
     if not os.path.exists(path):
         log.error("CSV file not found: %s", path)
         return movies
-
+ 
     skipped = 0
     with open(path, encoding="utf-8-sig", errors="replace", newline="") as f:
         first_line = f.readline()
@@ -185,18 +185,18 @@ def load_movies_csv(path: str) -> List[Movie]:
                 skipped += 1
                 if skipped <= 5:
                     log.warning("Skipping row %d: %s | keys=%s", line_no, exc, list(row.keys()))
-
+ 
     log.info("Loaded %d movies, skipped %d — from %s", len(movies), skipped, path)
     return movies
-
-
+ 
+ 
 # ---------------------------------------------------------------------------
 # DB loading (SQLite — elsődleges forrás, CSV fallback)
 # ---------------------------------------------------------------------------
 import sqlite3
-
+ 
 DB_PATH = os.path.join(BASE_DIR, "movies.db")
-
+ 
 _SELECT_SQL = """
     SELECT
         title, year, minutes,
@@ -208,10 +208,10 @@ _SELECT_SQL = """
     FROM movies
     ORDER BY title
 """
-
+ 
 def _split_pipe_db(value) -> List[str]:
     return [p.strip().lower() for p in (value or "").split("|") if p.strip()]
-
+ 
 def load_movies_db(path: str = DB_PATH) -> List[Movie]:
     movies: List[Movie] = []
     if not os.path.exists(path):
@@ -223,7 +223,7 @@ def load_movies_db(path: str = DB_PATH) -> List[Movie]:
     except sqlite3.Error as exc:
         log.error("Nem sikerült megnyitni a DB-t: %s — %s", path, exc)
         return movies
-
+ 
     skipped = 0
     try:
         with conn:
@@ -252,7 +252,7 @@ def load_movies_db(path: str = DB_PATH) -> List[Movie]:
         movies = []
     finally:
         conn.close()
-
+ 
     log.info(
         "DB-ből betöltve: %d film%s — %s",
         len(movies),
@@ -260,12 +260,12 @@ def load_movies_db(path: str = DB_PATH) -> List[Movie]:
         path,
     )
     return movies
-
+ 
 MOVIES: List[Movie] = load_movies_db(DB_PATH)
 if not MOVIES:
     log.warning("DB üres vagy nem elérhető — CSV-ből töltök be")
     MOVIES = load_movies_csv(CSV_PATH)
-
+ 
 # ---------------------------------------------------------------------------
 # Offline NLU
 # ---------------------------------------------------------------------------
@@ -277,34 +277,34 @@ MOOD_SYNONYMS: Dict[str, List[str]] = {
     "vicces":      ["vicc", "kom", "nevet", "őrült", "orult", "paród", "parod", "humor"],
     "romantic":    ["roman", "szerel", "romantic", "love", "randi", "pár", "par"],
 }
-
+ 
 BRAIN_SYNONYMS: Dict[str, List[str]] = {
     "konnyu":           ["könny", "konny", "laza", "agykikapcs", "nem akarok gondolkodni", "egyszerű", "egyszeru"],
     "kozepes":          ["közep", "kozep", "normál", "normal"],
     "elgondolkodtato":  ["elgondolk", "agyas", "agyal", "csavaros", "pszich", "bonyolult", "twist"],
 }
-
+ 
 _STOP_WORDS = {
     "legyen", "valami", "film", "néznék", "neznek", "néznek",
     "ma", "most", "kell", "akarok", "szeretnék", "szeretnek",
 }
-
+ 
 def extract_time(text: str) -> Optional[int]:
     t = (text or "").lower()
-
+ 
     m = re.search(r"(\d{2,3})\s*(perc|p)\b", t)
     if m:
         v = int(m.group(1))
         if 60 <= v <= 240:
             return v
-
+ 
     m = re.search(r"(\d+(?:[.,]\d+)?)\s*ó", t)
     if m:
         hours = float(m.group(1).replace(",", "."))
         v = int(round(hours * 60))
         if 60 <= v <= 240:
             return v
-
+ 
     if "másfél" in t or "masfel" in t:
         return 90
     if any(x in t for x in ("két óra", "2 óra", "2 ora", "120")):
@@ -312,7 +312,7 @@ def extract_time(text: str) -> Optional[int]:
     if any(x in t for x in ("három óra", "3 óra", "3 ora", "180")):
         return 180
     return None
-
+ 
 def _best_match(text: str, synonyms: Dict[str, List[str]]) -> Optional[str]:
     t = (text or "").lower()
     best, best_score = None, 0
@@ -321,19 +321,19 @@ def _best_match(text: str, synonyms: Dict[str, List[str]]) -> Optional[str]:
         if score > best_score:
             best_score, best = score, key
     return best if best_score > 0 else None
-
+ 
 def extract_mood(text: str) -> Optional[str]:
     return _best_match(text, MOOD_SYNONYMS)
-
+ 
 def extract_brain(text: str) -> Optional[str]:
     return _best_match(text, BRAIN_SYNONYMS)
-
+ 
 def extract_keywords(text: str) -> str:
     t = (text or "").lower().strip()
     tokens = [x for x in re.split(r"[^a-záéíóöőúüű0-9]+", t) if x]
     tokens = [x for x in tokens if x not in _STOP_WORDS and len(x) >= 3]
     return " ".join(tokens[:10])
-
+ 
 # ---------------------------------------------------------------------------
 # Optional OpenAI NLU
 # ---------------------------------------------------------------------------
@@ -348,7 +348,7 @@ _NLU_SYSTEM_PROMPT = (
     '"q": "kulcsszavak röviden"}\n'
     "Ha nincs információ, null. A q legyen rövid (max ~8 szó)."
 )
-
+ 
 def openai_nlu_profile(user_msg: str) -> Optional[Dict[str, Any]]:
     if not Config.OPENAI_API_KEY:
         return None
@@ -356,7 +356,7 @@ def openai_nlu_profile(user_msg: str) -> Optional[Dict[str, Any]]:
         from openai import OpenAI  # type: ignore
     except ImportError:
         return None
-
+ 
     client = OpenAI(api_key=Config.OPENAI_API_KEY)
     try:
         resp = client.chat.completions.create(
@@ -381,7 +381,7 @@ def openai_nlu_profile(user_msg: str) -> Optional[Dict[str, Any]]:
     except Exception as exc:
         log.debug("OpenAI NLU failed: %s", exc)
         return None
-
+ 
 # ---------------------------------------------------------------------------
 # Recommender scoring
 # ---------------------------------------------------------------------------
@@ -404,7 +404,7 @@ MOOD_KEYWORDS: Dict[str, List[str]] = {
     "romantic":  ["romance", "romantic", "love", "wedding", "relationship",
                   "romantikus", "szerelem", "szerelmes"],
 }
-
+ 
 BRAIN_KEYWORDS: Dict[str, List[str]] = {
     "konnyu":          ["könnyű", "laza", "comedy", "animation", "family",
                         "simple", "fun", "light", "feel-good"],
@@ -413,12 +413,12 @@ BRAIN_KEYWORDS: Dict[str, List[str]] = {
                         "psychological", "mystery", "twist", "mind", "complex",
                         "thought-provoking", "philosophical", "sci-fi"],
 }
-
+ 
 def score_movie(m: Movie, mood: str, time_limit: int, brain: str, extra: str) -> int:
     cfg = Config
     score = 0
     blob = f"{m.title} {' '.join(m.tags)} {' '.join(m.genres)} {m.why}".lower()
-
+ 
     # Time proximity
     if m.minutes and time_limit:
         diff = abs(m.minutes - time_limit)
@@ -427,12 +427,12 @@ def score_movie(m: Movie, mood: str, time_limit: int, brain: str, extra: str) ->
         elif diff <= 45:    score += cfg.TIME_CLOSE_45
         elif diff <= 80:    score += cfg.TIME_CLOSE_80
         else:               score += cfg.TIME_FAR_PENALTY
-
+ 
     # Mood match
     for word in MOOD_KEYWORDS.get(mood, []):
         if word in blob:
             score += cfg.MOOD_MATCH
-
+ 
     # Brain/complexity match
     heavy_words = BRAIN_KEYWORDS["elgondolkodtato"]
     if brain == "konnyu":
@@ -443,27 +443,27 @@ def score_movie(m: Movie, mood: str, time_limit: int, brain: str, extra: str) ->
     elif brain == "elgondolkodtato":
         if any(w in blob for w in heavy_words):
             score += cfg.BRAIN_MATCH
-
+ 
     # Extra keyword bonus
     if extra:
         for token in [t for t in extra.lower().replace(",", " ").split() if len(t) >= 3]:
             if token in blob:
                 score += cfg.KEYWORD_MATCH
-
+ 
     # Rating bonus — népszerű és jól értékelt filmek előnybe kerülnek
     if m.avg_rating >= 4.0 and m.rating_count >= 50:
         score += 3
     elif m.avg_rating >= 3.5 and m.rating_count >= 20:
         score += 1
-
+ 
     score += random.randint(0, cfg.RANDOM_BONUS)
     return score
-
+ 
 # ---------------------------------------------------------------------------
 # Batch AI "miért ajánljuk" generátor
 # ---------------------------------------------------------------------------
 _why_cache: Dict[str, str] = {}
-
+ 
 def batch_generate_why(
     movies: List[Movie],
     mood: str,
@@ -476,7 +476,7 @@ def batch_generate_why(
     Ha nincs API kulcs → szabályalapú fallback.
     """
     results: Dict[str, str] = {}
-
+ 
     # Cache-ből kivesszük amit már tudunk
     to_generate = []
     for m in movies:
@@ -485,10 +485,10 @@ def batch_generate_why(
             results[key] = _why_cache[key]
         else:
             to_generate.append((key, m))
-
+ 
     if not to_generate:
         return results
-
+ 
     # Szabályalapú fallback ha nincs API kulcs
     if not Config.OPENAI_API_KEY:
         for key, m in to_generate:
@@ -496,12 +496,12 @@ def batch_generate_why(
             _why_cache[key] = text
             results[key] = text
         return results
-
+ 
     # Batch AI generálás — egy hívással az összes filmhez
     try:
         from openai import OpenAI  # type: ignore
         client = OpenAI(api_key=Config.OPENAI_API_KEY)
-
+ 
         mood_hu = {
             "porgos": "pörgős akciós",
             "nyugis": "nyugis chill",
@@ -509,13 +509,13 @@ def batch_generate_why(
             "felemelo": "felemelő motiváló",
             "vicces": "vicces könnyed",
         }.get(mood, mood)
-
+ 
         brain_hu = {
             "konnyu": "könnyed agykikapcsolós",
             "kozepes": "közepes mélységű",
             "elgondolkodtato": "elgondolkodtató agyalós",
         }.get(brain, brain)
-
+ 
         # Film lista összeállítása a prompthoz
         film_lista = ""
         for i, (key, m) in enumerate(to_generate, 1):
@@ -527,7 +527,7 @@ def batch_generate_why(
                 + " | tagek: " + tags_str
                 + " | rating: " + str(round(m.avg_rating, 1)) + "/5\n"
             )
-
+ 
         extra_part = (", kulcsszavak: " + extra) if extra else ""
         prompt = (
             "Te egy baratsagos, emberi hangvételu magyar filmes ajánló vagy.\n"
@@ -552,9 +552,9 @@ def batch_generate_why(
             temperature=0.9,
             max_tokens=len(to_generate) * 80 + 100,
         )
-
+ 
         raw = (resp.choices[0].message.content or "").strip()
-
+ 
         # Válasz feldolgozása
         import re as _re
         lines = raw.strip().splitlines()
@@ -569,7 +569,7 @@ def batch_generate_why(
                 text = m_re.group(2).strip().strip('"').strip("'")
                 if text:
                     parsed[idx_num] = text
-
+ 
         # Berakjuk a cache-be és results-ba
         for i, (key, mov) in enumerate(to_generate, 1):
             text = parsed.get(i)
@@ -577,19 +577,19 @@ def batch_generate_why(
                 text = _why_rules(mov, mood, brain, extra)
             _why_cache[key] = text
             results[key] = text
-
+ 
         log.info("Batch AI why: %d film, %d generált", len(movies), len(to_generate))
-
+ 
     except Exception as exc:
         log.warning("Batch AI why failed: %s — fallback szabályokra", exc)
         for key, m in to_generate:
             text = _why_rules(m, mood, brain, extra)
             _why_cache[key] = text
             results[key] = text
-
+ 
     return results
-
-
+ 
+ 
 def _why_rules(m: Movie, mood: str, brain: str, extra: str) -> str:
     """Szabályalapú fallback — hosszabb, egyedi magyar szöveg a film adatai alapján."""
     genre_hu = {
@@ -609,11 +609,11 @@ def _why_rules(m: Movie, mood: str, brain: str, extra: str) -> str:
         "vicces":   "vicces",
         "romantic": "romantikus",
     }.get(mood, "")
-
+ 
     sentences = []
     genres_hu = [genre_hu.get(g, g) for g in m.genres[:3]]
     good_tags  = [t for t in m.tags if len(t) > 3][:3]
-
+ 
     # 1. mondat — műfaj + hangulat
     if genres_hu and mood_hu:
         sentences.append(
@@ -622,14 +622,14 @@ def _why_rules(m: Movie, mood: str, brain: str, extra: str) -> str:
         )
     elif genres_hu:
         sentences.append(f"Egy {', '.join(genres_hu)} alkotás {m.year}-ből.")
-
+ 
     # 2. mondat — egyedi tagek
     if good_tags:
         sentences.append(
             f"A film témái között szerepel: {', '.join(good_tags)} — "
             f"ezek garantálják az egyedi élményt."
         )
-
+ 
     # 3. mondat — értékelés + év
     if m.avg_rating >= 4.0 and m.rating_count >= 30:
         sentences.append(
@@ -638,13 +638,13 @@ def _why_rules(m: Movie, mood: str, brain: str, extra: str) -> str:
         )
     elif m.year > 0 and m.year < 1990:
         sentences.append(f"Egy {m.year}-es klasszikus, amely ma is megállja a helyét.")
-
+ 
     if not sentences:
         return f"{', '.join(genres_hu) if genres_hu else 'Film'} — ★{m.avg_rating:.1f}/5"
-
+ 
     return " ".join(sentences)
-
-
+ 
+ 
 def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int, take: int, era: str = "all") -> List[Movie]:
     # Era szűrés
     era_filters = {
@@ -656,16 +656,16 @@ def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int,
     }
     era_fn = era_filters.get(era, era_filters["all"])
     pool = [m for m in MOVIES if era_fn(m)]
-
+ 
     # Minden filmhez kiszámoljuk a pontszámot
     scored = [
         (score_movie(m, mood, time_limit, brain, extra), m)
         for m in pool
     ]
-
+ 
     # Rendezés pontszám szerint
     scored.sort(key=lambda x: x[0], reverse=True)
-
+ 
     # Minimum score — szigorúbb szűrés
     if extra and extra.strip():
         min_score = 4
@@ -676,25 +676,25 @@ def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int,
         filtered = [m for score, m in scored if score >= 1]
     if len(filtered) < take:
         filtered = [m for score, m in scored if score >= 0]
-
+ 
     return filtered[offset : offset + take]
-
+ 
 # ---------------------------------------------------------------------------
 # Session profile helpers
 # ---------------------------------------------------------------------------
 def default_profile() -> Dict[str, Any]:
     return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "genre_asked": False, "keyword_asked": False}
-
+ 
 def get_profile() -> Dict[str, Any]:
     p = session.get("profile")
     if not p:
         p = default_profile()
         session["profile"] = p
     return p
-
+ 
 def missing_fields(p: Dict[str, Any]) -> List[str]:
     return [f for f in ("mood", "time", "brain") if not p.get(f)]
-
+ 
 def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
     missing = missing_fields(p)
     if not missing:
@@ -748,7 +748,7 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
         ),
     }
     return dispatch.get(missing[0], ("Rendben.", []))
-
+ 
 # ---------------------------------------------------------------------------
 # Optional OpenAI chat reply
 # ---------------------------------------------------------------------------
@@ -762,7 +762,7 @@ _CHAT_SYSTEM_PROMPT = (
     "Soha ne állítsd hogy stream oldal vagytok. "
     "Ha a felhasználó ír egy témát (pl. maffia, szerelem), azt extra kulcsszóként kezeld."
 )
-
+ 
 def openai_chat_reply(p: Dict[str, Any], user_msg: str) -> Optional[str]:
     if not Config.OPENAI_API_KEY:
         return None
@@ -770,21 +770,21 @@ def openai_chat_reply(p: Dict[str, Any], user_msg: str) -> Optional[str]:
         from openai import OpenAI  # type: ignore
     except ImportError:
         return None
-
+ 
     client = OpenAI(api_key=Config.OPENAI_API_KEY)
     history = p.get("history") or []
     messages = [{"role": "system", "content": _CHAT_SYSTEM_PROMPT}]
     for entry in history[-12:]:
         if entry.get("role") in ("user", "assistant") and entry.get("content"):
             messages.append({"role": entry["role"], "content": entry["content"]})
-
+ 
     profile_hint = (
         f"Jelenlegi profil: time={p.get('time')}, mood={p.get('mood')}, "
         f"brain={p.get('brain')}, extra='{p.get('extra', '')}'."
     )
     messages.append({"role": "system", "content": profile_hint})
     messages.append({"role": "user",   "content": user_msg})
-
+ 
     try:
         resp = client.chat.completions.create(
             model=Config.OPENAI_MODEL,
@@ -796,13 +796,13 @@ def openai_chat_reply(p: Dict[str, Any], user_msg: str) -> Optional[str]:
     except Exception as exc:
         log.debug("OpenAI chat failed: %s", exc)
         return None
-
+ 
 # ---------------------------------------------------------------------------
 # Flask application
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 app.secret_key = Config.FLASK_SECRET or "SG_INSECURE_FALLBACK_CHANGE_ME"
-
+ 
 # ---------------------------------------------------------------------------
 # Google OAuth — bejelentkezés
 # ---------------------------------------------------------------------------
@@ -810,7 +810,7 @@ import urllib.request as _ureq
 import urllib.parse as _uparse
 import json as _json
 import hashlib, secrets
-
+ 
 def _google_auth_url(state: str) -> str:
     params = {
         "client_id":     Config.GOOGLE_CLIENT_ID,
@@ -821,18 +821,17 @@ def _google_auth_url(state: str) -> str:
         "access_type":   "online",
     }
     return "https://accounts.google.com/o/oauth2/v2/auth?" + _uparse.urlencode(params)
-
+ 
 def _exchange_code(code: str) -> Optional[Dict[str, Any]]:
-    """Authorization code → access token → user info."""
+    """Authorization code - access token - user info."""
+    token_data = _uparse.urlencode({
+        "code":          code,
+        "client_id":     Config.GOOGLE_CLIENT_ID,
+        "client_secret": Config.GOOGLE_CLIENT_SECRET,
+        "redirect_uri":  Config.GOOGLE_REDIRECT_URI,
+        "grant_type":    "authorization_code",
+    }).encode()
     try:
-        # Token csere
-        token_data = _uparse.urlencode({
-            "code":          code,
-            "client_id":     Config.GOOGLE_CLIENT_ID,
-            "client_secret": Config.GOOGLE_CLIENT_SECRET,
-            "redirect_uri":  Config.GOOGLE_REDIRECT_URI,
-            "grant_type":    "authorization_code",
-        }).encode()
         req = _ureq.Request(
             "https://oauth2.googleapis.com/token",
             data=token_data,
@@ -840,12 +839,9 @@ def _exchange_code(code: str) -> Optional[Dict[str, Any]]:
         )
         with _ureq.urlopen(req, timeout=10) as resp:
             tokens = _json.loads(resp.read())
-
         access_token = tokens.get("access_token")
         if not access_token:
             return None
-
-        # User info lekérése
         req2 = _ureq.Request(
             "https://www.googleapis.com/oauth2/v3/userinfo",
             headers={"Authorization": "Bearer " + access_token},
@@ -855,7 +851,7 @@ def _exchange_code(code: str) -> Optional[Dict[str, Any]]:
     except Exception as exc:
         log.warning("Google OAuth exchange failed: %s", exc)
         return None
-
+ 
 @app.get("/auth/google")
 def auth_google():
     if not Config.GOOGLE_CLIENT_ID:
@@ -863,26 +859,26 @@ def auth_google():
     state = secrets.token_hex(16)
     session["oauth_state"] = state
     return redirect(_google_auth_url(state))
-
+ 
 @app.get("/auth/google/callback")
 def auth_google_callback():
     error = request.args.get("error")
     if error:
         log.warning("Google OAuth error: %s", error)
         return redirect("/?error=auth_failed")
-
+ 
     state = request.args.get("state", "")
     if state != session.get("oauth_state", ""):
         return redirect("/?error=state_mismatch")
-
+ 
     code = request.args.get("code", "")
     if not code:
         return redirect("/?error=no_code")
-
+ 
     user_info = _exchange_code(code)
     if not user_info:
         return redirect("/?error=token_failed")
-
+ 
     # Felhasználó bejelentkeztetése
     session["user"] = {
         "id":      user_info.get("sub", ""),
@@ -893,17 +889,17 @@ def auth_google_callback():
     session.pop("oauth_state", None)
     log.info("Google login: %s", user_info.get("email"))
     return redirect("/")
-
+ 
 @app.get("/auth/logout")
 def auth_logout():
     session.pop("user", None)
     return redirect("/")
-
+ 
 @app.get("/api/me")
 def api_me():
     user = session.get("user")
     return jsonify({"user": user, "logged_in": bool(user)})
-
+ 
 # ---------------------------------------------------------------------------
 # Jelszóvédelem (opcionális — ha SITE_PASSWORD be van állítva a .env-ben)
 # ---------------------------------------------------------------------------
@@ -911,22 +907,22 @@ def api_me():
 def require_password():
     if not Config.SITE_PASSWORD:
         return  # nincs jelszó beállítva → szabad hozzáférés
-
+ 
     # Statikus erőforrások és a login végpont mindig szabad
     if request.path in ("/login", "/logout"):
         return
-
+ 
     # Ha már be van jelentkezve
     if session.get("auth") == Config.SITE_PASSWORD:
         return
-
+ 
     # API hívások → 401
     if request.path.startswith("/api/"):
         return jsonify({"error": "Unauthorized"}), 401
-
+ 
     # Böngésző → login oldal
     return _login_page()
-
+ 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -936,12 +932,12 @@ def login():
             return '<script>location.href="/"</script>'
         return _login_page(error=True)
     return _login_page()
-
+ 
 @app.route("/logout")
 def logout():
     session.pop("auth", None)
     return '<script>location.href="/login"</script>'
-
+ 
 def _login_page(error: bool = False) -> str:
     err_html = '<p style="color:#c84b4b;font-size:13px;margin-top:8px">Hibás jelszó!</p>' if error else ''
     return f"""<!doctype html>
@@ -979,15 +975,15 @@ def _login_page(error: bool = False) -> str:
 </div>
 </body>
 </html>"""
-
+ 
 _GREETINGS = {"szia", "helo", "hello", "helló", "csá", "csa", "szevasz", "sziasztok", "hi"}
 _RESET_CMDS = {"reset", "uj", "új", "kezdjük újra", "restart"}
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/trailer — YouTube trailer keresés (első találat video ID)
 # ---------------------------------------------------------------------------
 _trailer_cache: Dict[str, str] = {}
-
+ 
 @app.get("/api/trailer")
 def api_trailer():
     import urllib.request as _ureq, json as _json
@@ -997,11 +993,11 @@ def api_trailer():
     tmdb_id  = request.args.get("tmdb_id", "").strip()
     if not title:
         return jsonify({"url": ""}), 400
-
+ 
     cache_key = f"{title}_{year}_{tmdb_id}"
     if cache_key in _trailer_cache:
         return jsonify({"url": _trailer_cache[cache_key]})
-
+ 
     # 1. TMDB API-val keressük a YouTube trailer ID-t (ha van kulcs és tmdb_id)
     tmdb_key = os.getenv("TMDB_API_KEY", "").strip()
     if tmdb_key and tmdb_id:
@@ -1029,13 +1025,13 @@ def api_trailer():
                     return jsonify({"url": yt_url})
         except Exception as exc:
             log.debug("TMDB trailer lookup failed for %s: %s", title, exc)
-
+ 
     # 2. Fallback: YouTube keresési link
     query = (title + " " + year + " official trailer").strip()
     yt_search = "https://www.youtube.com/results?search_query=" + _quote(query)
     _trailer_cache[cache_key] = yt_search
     return jsonify({"url": yt_search})
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/justwatch — JustWatch keresési link generálás
 # ---------------------------------------------------------------------------
@@ -1046,17 +1042,17 @@ def api_justwatch():
     year  = request.args.get("year", "").strip()
     if not title:
         return jsonify({"url": ""}), 400
-
+ 
     # JustWatch magyar keresési URL
     query = title + (" " + year if year else "")
     jw_url = "https://www.justwatch.com/hu/kereses?q=" + _quote(title)
-
+ 
     return jsonify({
         "url":      jw_url,
         "title":    title,
         "year":     year,
     })
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/poster  — TMDB képek proxyzása (böngésző blokk megkerülése)
 # ---------------------------------------------------------------------------
@@ -1081,7 +1077,7 @@ def api_poster():
     except Exception as exc:
         log.debug("Poster proxy failed for %s: %s", url, exc)
         return "Not found", 404
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/debug
 # ---------------------------------------------------------------------------
@@ -1095,7 +1091,7 @@ def api_debug():
         "openai_available": bool(Config.OPENAI_API_KEY),
         "model":            Config.OPENAI_MODEL,
     })
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/csv_info
 # ---------------------------------------------------------------------------
@@ -1110,7 +1106,7 @@ def api_csv_info():
         return jsonify({"ok": True, "csv_path": CSV_PATH, "header": first[:300], "sample": second[:300]})
     except OSError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/nlu
 # ---------------------------------------------------------------------------
@@ -1126,7 +1122,7 @@ def api_nlu():
         "q":     extract_keywords(text),
     }
     return jsonify({"offline": offline, "openai": openai_nlu_profile(text)})
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/recs
 # ---------------------------------------------------------------------------
@@ -1141,13 +1137,13 @@ def api_recs():
         take   = min(24, max(1, int(request.args.get("take", "12"))))
     except (ValueError, TypeError) as exc:
         return jsonify({"error": f"Invalid parameter: {exc}"}), 400
-
+ 
     era = request.args.get("era", "all").strip()
     items = rank_movies(mood, time_limit, brain, q, offset, take, era)
-
+ 
     # Batch AI miért generálás — egy hívással az összes filmhez
     why_map = batch_generate_why(items, mood, brain, q)
-
+ 
     return jsonify({
         "total":  len(MOVIES),
         "offset": offset,
@@ -1173,7 +1169,7 @@ def api_recs():
             for m in items
         ],
     })
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/chat
 # ---------------------------------------------------------------------------
@@ -1183,18 +1179,18 @@ def api_chat():
     user_msg = str(body.get("message") or "").strip()
     p = get_profile()
     low = user_msg.lower()
-
+ 
     if not user_msg:
         q, quick = next_question(p)
         return jsonify({"assistant": q, "quick_replies": quick, "profile": p})
-
+ 
     # Reset
     if low in _RESET_CMDS:
         session["profile"] = default_profile()
         p = get_profile()
         q, quick = next_question(p)
         return jsonify({"assistant": "Oké, tiszta lap. 🙂 " + q, "quick_replies": quick, "profile": p})
-
+ 
     # Közvetlen mood beállítás a gombokból
     if user_msg.startswith('__mood__'):
         mood_val = user_msg[8:].strip()
@@ -1217,14 +1213,14 @@ def api_chat():
                 None, ["Ajánlj","Újra dobás","Rövidebb","Reset"]
             )
             return jsonify({"assistant": ai_text, "quick_replies": quick, "profile": p})
-
+ 
     # Greeting → always reset and re-ask
     if low in _GREETINGS:
         session["profile"] = default_profile()
         p = get_profile()
         q, quick = next_question(p)
         return jsonify({"assistant": "Szia 🙂 " + q, "quick_replies": quick, "profile": p})
-
+ 
     # Quick action buttons
     _BUTTON_ACTIONS: Dict[str, Any] = {
         "sötétebb":           lambda: p.update({"mood": "sotet"}),
@@ -1269,13 +1265,13 @@ def api_chat():
     }
     if low in _BUTTON_ACTIONS:
         _BUTTON_ACTIONS[low]()
-
+ 
     # Offline NLU
     time_val  = extract_time(user_msg)
     mood_val  = extract_mood(user_msg)
     brain_val = extract_brain(user_msg)
     kw        = extract_keywords(user_msg)
-
+ 
     # Merge with optional OpenAI NLU
     nlu = openai_nlu_profile(user_msg)
     if nlu:
@@ -1287,20 +1283,20 @@ def api_chat():
         mood_val  = str(nlu["mood"]).strip()  if nlu.get("mood")  else mood_val
         brain_val = str(nlu["brain"]).strip() if nlu.get("brain") else brain_val
         kw        = str(nlu["q"]).strip()     if nlu.get("q")     else kw
-
+ 
     if time_val:  p["time"]  = time_val
     if mood_val:  p["mood"]  = mood_val
     if brain_val: p["brain"] = brain_val
-
+ 
     # Accumulate extra keywords
     if kw and len(kw) >= 3:
         merged = f"{p.get('extra', '')} {kw}".strip()
         p["extra"] = merged[:240]
-
+ 
     # ── FIX: auto-activate ready when all three profile fields are filled ──
     if not p.get("ready") and not missing_fields(p):
         p["ready"] = True
-
+ 
     # Build reply text
     ai_text = openai_chat_reply(p, user_msg)
     if not ai_text:
@@ -1312,7 +1308,7 @@ def api_chat():
                 f"(hangulat: {p['mood']}, idő: {p['time']} perc, mód: {p['brain']}). "
                 f"Jobbra dobom a poszteres listát — nyomj 'Tölts még'-et is. :)"
             )
-
+ 
     # Persist history (keep last 30 turns)
     hist = p.get("history") or []
     hist.extend([
@@ -1321,14 +1317,14 @@ def api_chat():
     ])
     p["history"] = hist[-30:]
     session["profile"] = p
-
+ 
     _, quick = next_question(p) if missing_fields(p) else (
         None,
         ["Ajánlj", "Újra dobás", "Sötétebb", "Viccesebb", "Rövidebb", "Reset"],
     )
-
+ 
     return jsonify({"assistant": ai_text, "quick_replies": quick, "profile": p})
-
+ 
 # ---------------------------------------------------------------------------
 # API: /api/local_poster — helyi posters/ mappából szolgál ki képeket
 # ---------------------------------------------------------------------------
@@ -1346,7 +1342,7 @@ def api_local_poster(filename):
                                    max_age=86400)
     # Ha nincs helyi fájl, próbáljuk a proxyn
     return api_poster()
-
+ 
 # ---------------------------------------------------------------------------
 # Frontend — single-page app
 # ---------------------------------------------------------------------------
@@ -1382,7 +1378,7 @@ body{
 }
 /* Film strip top - eltávolítva */
 .wrap{max-width:1160px;margin:0 auto}
-
+ 
 /* ── Header ── */
 .header{
   display:flex;align-items:center;justify-content:space-between;
@@ -1405,11 +1401,11 @@ body{
   border-radius:999px;padding:5px 10px;color:var(--muted);font-size:11px;
 }
 .badge .hl{color:var(--gold)}
-
+ 
 /* ── Layout grid ── */
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
 @media(max-width:768px){.grid{grid-template-columns:1fr}}
-
+ 
 /* ── Cards ── */
 .card{
   border:1px solid var(--border);background:rgba(14,18,24,.8);
@@ -1423,7 +1419,7 @@ body{
 }
 .card-title{font-family:var(--font-serif);font-size:15px;color:var(--gold)}
 .card-body{padding:14px 16px}
-
+ 
 /* ── Buttons ── */
 .btn{
   cursor:pointer;border:1px solid var(--border2);
@@ -1435,7 +1431,7 @@ body{
 }
 .btn:hover{border-color:var(--gold);background:linear-gradient(145deg,#212e48,#0e1428)}
 .btn:active{transform:scale(.97)}
-
+ 
 /* ── Mood selector ── */
 .mood-grid{
   display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
@@ -1453,7 +1449,7 @@ body{
 .mood-btn .emoji{font-size:22px;display:block;margin-bottom:4px}
 .mood-btn .label{font-size:11px;color:var(--muted);font-weight:600}
 .mood-btn.active .label{color:var(--gold2)}
-
+ 
 /* ── Surprise button ── */
 .surprise-btn{
   width:100%;cursor:pointer;border:1px solid var(--gold);
@@ -1465,7 +1461,7 @@ body{
 }
 .surprise-btn:hover{background:linear-gradient(145deg,rgba(200,168,75,.2),rgba(200,168,75,.08))}
 .surprise-btn:active{transform:scale(.98)}
-
+ 
 /* ── Chat ── */
 .chat-box{
   background:rgba(8,10,14,.8);border:1px solid var(--border);
@@ -1497,7 +1493,7 @@ body{
 .typing-dots span:nth-child(2){animation-delay:.2s}
 .typing-dots span:nth-child(3){animation-delay:.4s}
 @keyframes blink{0%,80%,100%{opacity:.2;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
-
+ 
 /* ── Chips ── */
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .chip{
@@ -1507,7 +1503,7 @@ body{
   -webkit-appearance:none;
 }
 .chip:hover{border-color:var(--gold);background:rgba(200,168,75,.08);color:var(--gold2)}
-
+ 
 /* ── Input row ── */
 .input-row{display:flex;gap:8px;margin-top:12px}
 .chat-input{
@@ -1519,7 +1515,7 @@ body{
 }
 .chat-input:focus{border-color:var(--gold)}
 .chat-input::placeholder{color:var(--faint)}
-
+ 
 /* ── Status ── */
 .status-bar{
   margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;
@@ -1530,7 +1526,7 @@ body{
   margin-top:12px;padding:9px 12px;border:1px solid var(--border);
   border-radius:10px;background:rgba(14,18,24,.6);color:var(--muted);font-size:11px;
 }
-
+ 
 /* ── Poster strip ── */
 #poster-strip{
   display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
@@ -1595,7 +1591,7 @@ body{
 .poster-btns .jw-btn{color:#00d8ff;border-color:rgba(0,216,255,.2);background:rgba(0,216,255,.05)}
 .poster-btns .jw-btn:hover{border-color:#00d8ff;background:rgba(0,216,255,.12)}
 .empty-state{grid-column:1/-1;padding:28px;text-align:center;color:var(--muted);font-size:13px}
-
+ 
 /* ── Watchlist panel ── */
 .watchlist-panel{
   display:none;position:fixed;inset:0;background:rgba(4,6,10,.9);
@@ -1624,7 +1620,7 @@ body{
 }
 .wl-remove:hover{border-color:var(--red);color:var(--red)}
 .wl-empty{color:var(--muted);font-size:13px;text-align:center;padding:20px 0}
-
+ 
 /* ── Modal ── */
 .modal-backdrop{
   display:none;position:fixed;inset:0;background:rgba(4,6,10,.85);
@@ -1650,7 +1646,7 @@ body{
 }
 .modal-close:hover{border-color:var(--red);color:var(--red)}
 .modal-body{padding:18px;color:var(--text);font-size:13.5px;line-height:1.7}
-
+ 
 /* ── TMDB footer ── */
 .tmdb-footer{
   margin-top:24px;padding:14px 16px;border-top:1px solid var(--border);
@@ -1664,7 +1660,7 @@ body{
 </head>
 <body>
 <div class="wrap">
-
+ 
 <!-- Header -->
 <div class="header">
   <div class="brand">
@@ -1681,10 +1677,10 @@ body{
     <div id="user-area"></div>
   </div>
 </div>
-
+ 
 <!-- Main grid -->
 <div class="grid">
-
+ 
   <!-- Chat card -->
   <div class="card">
     <div class="card-head">
@@ -1692,7 +1688,7 @@ body{
       <button class="btn" id="btn-reset">↺ Reset</button>
     </div>
     <div class="card-body">
-
+ 
       <!-- Chat -->
       <div class="chat-box" id="chat-box"></div>
       <div class="chips" id="chips"></div>
@@ -1700,7 +1696,7 @@ body{
         <input class="chat-input" id="inp" placeholder="pl. „feszült thriller 2 óra"" autocomplete="off"/>
         <button class="btn" id="btn-send">➤</button>
       </div>
-
+ 
       <!-- Mood selector -->
       <div class="mood-grid" id="mood-grid" style="margin-top:12px">
         <button class="mood-btn" data-mood="porgos"><span class="emoji">⚡</span><span class="label">Pörgős</span></button>
@@ -1710,7 +1706,7 @@ body{
         <button class="mood-btn" data-mood="vicces"><span class="emoji">😂</span><span class="label">Vicces</span></button>
         <button class="mood-btn" data-mood="romantic"><span class="emoji">💕</span><span class="label">Romantikus</span></button>
       </div>
-
+ 
       <!-- Surprise me -->
       <button class="surprise-btn" id="btn-surprise" style="margin-top:10px;margin-bottom:0">🎲 Lepj meg! — random film</button>
       <div class="status-bar">
@@ -1721,7 +1717,7 @@ body{
       </div>
     </div>
   </div>
-
+ 
   <!-- Poster card -->
   <div class="card">
     <div class="card-head" style="flex-wrap:wrap;gap:8px">
@@ -1746,9 +1742,9 @@ body{
       </div>
     </div>
   </div>
-
+ 
 </div>
-
+ 
 <!-- TMDB Footer -->
 <div class="tmdb-footer">
   <div class="tmdb-logo-wrap">
@@ -1761,9 +1757,9 @@ body{
     Poszter képek forrása: <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">The Movie Database (TMDB)</a>
   </div>
 </div>
-
+ 
 </div><!-- /wrap -->
-
+ 
 <!-- Watchlist panel -->
 <div class="watchlist-panel" id="watchlist-panel">
   <div class="watchlist-sheet">
@@ -1774,7 +1770,7 @@ body{
     <div id="watchlist-list"></div>
   </div>
 </div>
-
+ 
 <!-- Why modal -->
 <div class="modal-backdrop" id="modal">
   <div class="modal">
@@ -1785,15 +1781,15 @@ body{
     <div class="modal-body" id="modal-body"></div>
   </div>
 </div>
-
+ 
 <script>
 (function(){
 'use strict';
-
+ 
 /* ── State ── */
 let state = {mood:'porgos',brain:'konnyu',time:120,q:'',offset:0,take:6,ready:false,era:'all'};
 let watchlist = JSON.parse(localStorage.getItem('sg_watchlist') || '[]');
-
+ 
 /* ── Refs ── */
 const chatBox     = document.getElementById('chat-box');
 const chips       = document.getElementById('chips');
@@ -1804,14 +1800,14 @@ const pillLoaded  = document.getElementById('pill-loaded');
 const modal       = document.getElementById('modal');
 const modalTitle  = document.getElementById('modal-title');
 const modalBody   = document.getElementById('modal-body');
-
+ 
 /* ── Helpers ── */
 function esc(s){
   return String(s||'')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 }
-
+ 
 /* ── Modal ── */
 function openModal(title,text){
   modalTitle.textContent = title;
@@ -1822,7 +1818,7 @@ function closeModal(){modal.classList.remove('open')}
 document.getElementById('modal-close').addEventListener('click',closeModal);
 modal.addEventListener('click',e=>{if(e.target===modal)closeModal()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
-
+ 
 /* ── Watchlist ── */
 function saveWatchlist(){localStorage.setItem('sg_watchlist',JSON.stringify(watchlist))}
 function isInWatchlist(title,year){return watchlist.some(m=>m.title===title&&m.year===year)}
@@ -1874,7 +1870,7 @@ document.getElementById('watchlist-panel').addEventListener('click',e=>{
   if(e.target===document.getElementById('watchlist-panel'))
     document.getElementById('watchlist-panel').classList.remove('open');
 });
-
+ 
 /* ── Mood buttons ── */
 const moodMessages = {
   'porgos':   'Pörgős filmeket keresek neked.',
@@ -1901,7 +1897,7 @@ document.querySelectorAll('.mood-btn').forEach(btn=>{
     statusLine.textContent = 'mood='+state.mood+' · time≈'+state.time+'min · mód='+state.brain;
   });
 });
-
+ 
 /* ── Surprise me ── */
 document.getElementById('btn-surprise').addEventListener('click', async()=>{
   const btn = document.getElementById('btn-surprise');
@@ -1913,7 +1909,7 @@ document.getElementById('btn-surprise').addEventListener('click', async()=>{
     const randomTime = [90,120,150,180][Math.floor(Math.random()*4)];
     const brains = ['konnyu','kozepes','elgondolkodtato'];
     const randomBrain = brains[Math.floor(Math.random()*brains.length)];
-
+ 
     const url = '/api/recs?mood='+randomMood+'&brain='+randomBrain
       +'&time='+randomTime+'&offset='+Math.floor(Math.random()*50)+'&take=1';
     const res  = await fetch(url);
@@ -1933,7 +1929,7 @@ document.getElementById('btn-surprise').addEventListener('click', async()=>{
   btn.textContent = '🎲 Lepj meg! — random film';
   btn.disabled = false;
 });
-
+ 
 /* ── Chat ── */
 function addMsg(who,text){
   const row = document.createElement('div');
@@ -1957,7 +1953,7 @@ function addTyping(){
   chatBox.scrollTop = chatBox.scrollHeight;
   return row;
 }
-
+ 
 /* ── Chips ── */
 function setChips(arr){
   chips.innerHTML='';
@@ -1976,17 +1972,17 @@ function setChips(arr){
     chips.appendChild(c);
   });
 }
-
+ 
 /* ── Posters ── */
 function posterHTML(m){
   const poster  = (m.poster||'').trim();
   const trailer = (m.trailer||'').trim();
   const cert    = (m.certification||'').trim();
   const saved   = isInWatchlist(m.title,m.year);
-
+ 
   const fallbackStyle = poster?'style="display:none"':'';
   const fallback = '<div class="poster-fallback" '+fallbackStyle+'>'+esc(m.title)+'</div>';
-
+ 
   let imgBlock='';
   if(poster){
     const src = poster.startsWith('http')
@@ -1994,11 +1990,11 @@ function posterHTML(m){
       : esc(poster);
     imgBlock = '<img src="'+src+'" alt="'+esc(m.title)+'" loading="eager" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">';
   }
-
+ 
   const certBadge = cert?'<div class="cert-badge">'+esc(cert)+'+</div>':'';
   const tmdbBadge = poster?'<a class="tmdb-badge" href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>':'';
   const wlBtn = '<button class="watchlist-btn'+(saved?' saved':'')+'" data-title="'+esc(m.title)+'" data-year="'+esc(String(m.year))+'">'+(saved?'★':'☆')+'</button>';
-
+ 
   // Trailer URL — közvetlen lejátszás
   let ytUrl;
   let ytEmbed = '';
@@ -2015,11 +2011,11 @@ function posterHTML(m){
     ytUrl = 'https://www.youtube.com/results?search_query='+encodeURIComponent(m.title+' '+m.year+' official trailer');
     ytEmbed = '';
   }
-
+ 
   const rating = m.avg_rating>0
     ? '<span style="color:var(--gold);margin-left:3px">★'+m.avg_rating.toFixed(1)+'</span>'
     : '';
-
+ 
   return '<div class="poster-card">'
     +'<div class="poster-img">'+imgBlock+fallback+certBadge+tmdbBadge+wlBtn+'</div>'
     +'<div class="poster-info">'
@@ -2031,7 +2027,7 @@ function posterHTML(m){
     +'<button class="jw-btn" data-title="'+esc(m.title)+'" data-year="'+esc(String(m.year||''))+'">📺 Hol?</button>'
     +'</div></div></div>';
 }
-
+ 
 function bindButtons(scope){
   scope.querySelectorAll('.why-btn').forEach(btn=>{
     btn.addEventListener('click',e=>{
@@ -2045,10 +2041,10 @@ function bindButtons(scope){
       const year  = btn.dataset.year  || '';
       const tmdb  = btn.dataset.tmdb  || '';
       const orig  = btn.textContent;
-
+ 
       btn.textContent = '⏳';
       btn.disabled = true;
-
+ 
       try {
         const res = await fetch(
           '/api/trailer?title='+encodeURIComponent(title)
@@ -2114,7 +2110,7 @@ function bindButtons(scope){
     });
   });
 }
-
+ 
 async function loadMore(){
   const url = '/api/recs?mood='+encodeURIComponent(state.mood)
     +'&brain='+encodeURIComponent(state.brain)
@@ -2140,7 +2136,7 @@ async function loadMore(){
     state.offset+=items.length;
   }catch(e){console.error('loadMore:',e)}
 }
-
+ 
 /* ── Send ── */
 async function send(){
   const msg=(inp.value||'').trim();
@@ -2177,7 +2173,7 @@ async function send(){
     console.error(e);
   }
 }
-
+ 
 /* ── Era filter ── */
 document.getElementById('era-filter').addEventListener('change', async()=>{
   const val = document.getElementById('era-filter').value;
@@ -2188,35 +2184,53 @@ document.getElementById('era-filter').addEventListener('change', async()=>{
     await loadMore();
   }
 });
-
+ 
 /* ── Events ── */
 document.getElementById('btn-send').addEventListener('click',send);
 document.getElementById('btn-reset').addEventListener('click',()=>{inp.value='Reset';send()});
 document.getElementById('btn-more').addEventListener('click',loadMore);
 inp.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
-
+ 
 /* ── User area ── */
 async function loadUser(){
   try{
     const res = await fetch('/api/me');
     const data = await res.json();
     const area = document.getElementById('user-area');
+    if(!area) return;
     if(data.logged_in && data.user){
-      area.innerHTML =
-        '<div style="display:flex;align-items:center;gap:8px">'
-        +'<img src="'+data.user.picture+'" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border2)" onerror="this.style.display='none'">'
-        +'<span style="font-size:12px;color:var(--text)">'+data.user.name.split(' ')[0]+'</span>'
-        +'<a href="/auth/logout" style="font-size:11px;color:var(--muted);text-decoration:none;border:1px solid var(--border);padding:4px 8px;border-radius:8px">Kilépés</a>'
-        +'</div>';
+      const name = (data.user.name || '').split(' ')[0];
+      const pic  = data.user.picture || '';
+      const div  = document.createElement('div');
+      div.style.cssText = 'display:flex;align-items:center;gap:8px';
+      if(pic){
+        const img = document.createElement('img');
+        img.src = pic;
+        img.style.cssText = 'width:28px;height:28px;border-radius:50%;border:1px solid #2a3441';
+        div.appendChild(img);
+      }
+      const span = document.createElement('span');
+      span.style.cssText = 'font-size:12px;color:#dde4ed';
+      span.textContent = name;
+      div.appendChild(span);
+      const a = document.createElement('a');
+      a.href = '/auth/logout';
+      a.style.cssText = 'font-size:11px;color:#7a8a9a;text-decoration:none;border:1px solid #1e2730;padding:4px 8px;border-radius:8px';
+      a.textContent = 'Kilépés';
+      div.appendChild(a);
+      area.innerHTML = '';
+      area.appendChild(div);
     } else {
-      area.innerHTML =
-        '<a href="/auth/google" style="display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:12px;border:1px solid var(--border2);background:linear-gradient(145deg,#1c2840,#0c1020);color:var(--text);text-decoration:none;font-size:12px;font-weight:600">'
-        +'<img src="https://www.google.com/favicon.ico" style="width:14px;height:14px"> Google bejelentkezés'
-        +'</a>';
+      const a = document.createElement('a');
+      a.href = '/auth/google';
+      a.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:12px;border:1px solid #2a3441;background:linear-gradient(145deg,#1c2840,#0c1020);color:#dde4ed;text-decoration:none;font-size:12px;font-weight:600';
+      a.textContent = 'Google bejelentkezés';
+      area.innerHTML = '';
+      area.appendChild(a);
     }
-  }catch(e){ console.error(e); }
+  }catch(e){ console.error('loadUser error:', e); }
 }
-
+ 
 /* ── Init ── */
 loadUser();
 addMsg('SG','Szia! Válassz hangulatot a gombokkal, vagy írd le mit szeretnél nézni.');
@@ -2226,11 +2240,11 @@ fetch('/api/debug').then(r=>r.json()).then(d=>{const p=document.getElementById('
 </script>
 </body>
 </html>"""
-
+ 
 @app.get("/")
 def home():
     return _HTML
-
+ 
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
