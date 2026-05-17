@@ -444,14 +444,22 @@ def score_movie(m: Movie, mood: str, time_limit: int, brain: str, extra: str) ->
         if any(w in blob for w in heavy_words):
             score += cfg.BRAIN_MATCH
  
-    # Extra keyword bonus
+    # Extra keyword bonus — szigorú, pontos egyezés
     if extra:
-        for token in [t for t in extra.lower().replace(",", " ").split() if len(t) >= 3]:
+        tokens = [t for t in extra.lower().replace(",", " ").split() if len(t) >= 3]
+        matched = 0
+        for token in tokens:
             if token in blob:
-                score += cfg.KEYWORD_MATCH
-            # Részleges egyezés is számít
+                score += cfg.KEYWORD_MATCH * 2  # dupla súly
+                matched += 1
             elif any(token in tag for tag in m.tags):
-                score += 1
+                score += cfg.KEYWORD_MATCH
+                matched += 1
+        # Bónusz ha sok egyezés van
+        if matched >= 3:
+            score += 5
+        elif matched >= 2:
+            score += 2
  
     # Rating bonus — népszerű és jól értékelt filmek előnybe kerülnek
     if m.avg_rating >= 4.0 and m.rating_count >= 50:
@@ -669,16 +677,18 @@ def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int,
     # Rendezés pontszám szerint
     scored.sort(key=lambda x: x[0], reverse=True)
  
-    # Minimum score — szigorúbb szűrés
+    # Minimum score — szigorú szűrés
     if extra and extra.strip():
-        min_score = 4
+        min_score = 6   # ha van extra kulcsszó, nagyon szigorú
     else:
-        min_score = 2
+        min_score = 3   # alap szűrés
     filtered = [m for score, m in scored if score >= min_score]
+    # Fokozatos lazítás ha túl kevés a találat
+    if len(filtered) < take:
+        min_score = max(2, min_score - 2)
+        filtered = [m for score, m in scored if score >= min_score]
     if len(filtered) < take:
         filtered = [m for score, m in scored if score >= 1]
-    if len(filtered) < take:
-        filtered = [m for score, m in scored if score >= 0]
  
     return filtered[offset : offset + take]
  
@@ -686,7 +696,7 @@ def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int,
 # Session profile helpers
 # ---------------------------------------------------------------------------
 def default_profile() -> Dict[str, Any]:
-    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "genre_asked": False, "keyword_asked": False, "company_asked": False, "ending_asked": False}
+    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "style_asked": False, "emotion_asked": False}
  
 def get_profile() -> Dict[str, Any]:
     p = session.get("profile")
@@ -706,62 +716,66 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
             p["era_asked"] = True
             return (
                 "Melyik korszakból szeretnél filmet nézni?",
-                ["Friss (2015 után)", "Modern (2000-2015)", "Klasszikus (1980-2000)", "Régi klasszikus (1980 előtt)", "Mindegy"],
+                ["Friss (2015 után)", "Modern (2000-2015)", "Klasszikus (1980-2000)", "Régi (1980 előtt)", "Mindegy"],
             )
-        # 5. kérdés: műfaj
-        if not p.get("genre_asked"):
-            p["genre_asked"] = True
+        # 5. kérdés: van-e kedvenc rendező vagy szereplő stílus
+        if not p.get("style_asked"):
+            p["style_asked"] = True
+            return (
+                "Milyen stílusú filmet szeretnél?",
+                ["Valós történeten alapul", "Sci-fi / fantasy világ", "Mindennapi élet", "Természetfeletti", "Mindegy"],
+            )
+        # 6. kérdés: hangulat alapján személyre szabott
+        if not p.get("emotion_asked"):
+            p["emotion_asked"] = True
             mood = p.get("mood", "")
-            genre_hints = {
-                "porgos":   ["Akció", "Thriller", "Krimi", "Kaland", "Háborús"],
-                "sotet":    ["Horror", "Thriller", "Misztikus", "Krimi", "Pszichológiai"],
-                "vicces":   ["Vígjáték", "Animáció", "Paródia", "Romantikus vígjáték"],
-                "felemelo": ["Dráma", "Életrajz", "Sport", "Zenés", "Történelmi"],
-                "nyugis":   ["Romantikus", "Vígjáték", "Családi", "Dráma"],
-                "romantic": ["Romantikus dráma", "Romantikus vígjáték", "Szerelmes film"],
+            intensity_map = {
+                "sotet": (
+                    "Mennyire legyen durva és intenzív?",
+                    ["Enyhén sötét, nem ijeszt", "Közepes — feszült de nem horror", "Igazán durva és nyomasztó", "Mindegy"]
+                ),
+                "porgos": (
+                    "Mennyire legyen brutális az akció?",
+                    ["Tiszta akció, minimális vér", "Közepes — van némi brutalitás", "Brutális és nyers", "Mindegy"]
+                ),
+                "vicces": (
+                    "Milyen humor illik most hozzád?",
+                    ["Ártatlan, mindenki nevet", "Fekete humor, csípős poénok", "Abszurd és őrült", "Mindegy"]
+                ),
+                "felemelo": (
+                    "Mennyire legyen érzelmes?",
+                    ["Kicsit megható, de nem sírok", "Erősen érzelmes, könnyeket csal", "Inkább inspiráló mint érzelmes", "Mindegy"]
+                ),
+                "nyugis": (
+                    "Mennyire legyen romantikus?",
+                    ["Csak egy kis szerelem mellékesen", "Erős románc legyen a középpontban", "Inkább emberi kapcsolatok legyenek a középpontban", "Mindegy"]
+                ),
+                "romantic": (
+                    "Milyen románcot szeretnél?",
+                    ["Édes és boldog szerelem", "Drámai és tragikus románc", "Bonyolult kapcsolat sok fordulattal", "Mindegy"]
+                ),
             }
-            genres = genre_hints.get(mood, ["Dráma", "Akció", "Vígjáték", "Thriller"])
-            return (
-                "Van kedvenc műfajod?",
-                genres + ["Mindegy"],
-            )
-        # 6. kérdés: egyedül vagy társasággal
-        if not p.get("company_asked"):
-            p["company_asked"] = True
-            return (
-                "Egyedül nézel filmet, vagy társasággal?",
-                ["Egyedül", "Párban", "Barátokkal", "Családdal"],
-            )
-        # 7. kérdés: befejezés típusa
-        if not p.get("ending_asked"):
-            p["ending_asked"] = True
-            return (
-                "Milyen befejezést szeretnél?",
-                ["Boldog befejezés", "Nyitott vég", "Csavaros befejezés", "Mindegy"],
-            )
-        # 8. kérdés: témák
-        if not p.get("keyword_asked"):
-            p["keyword_asked"] = True
-            return (
-                "Van konkrét téma ami most vonz? Pl. maffia, bosszú, szerelem, barátság, időutazás.",
-                ["Ajánlj most", "Reset"],
-            )
+            q, opts = intensity_map.get(mood, (
+                "Mennyire legyen intenzív a film?",
+                ["Enyhe és könnyű", "Közepes intenzitású", "Nagyon intenzív és erős", "Mindegy"]
+            ))
+            return (q, opts)
         return (
-            "Megvan minden. Jönnek a filmek.",
+            "Tökéletes, minden megvan. Jönnek a filmek.",
             ["Ajánlj most", "Reset"],
         )
     dispatch = {
         "mood":  (
-            "Milyen hangulatban vagy ma este?",
+            "Milyen hangulatban vagy ma este? (pörgős / nyugis / sötét / felemelő / vicces / romantikus)",
             ["Porgos", "Nyugis", "Sotet", "Felemelo", "Vicces", "Romantikus"]
         ),
         "time":  (
-            "Mennyi időd van ma filmre?",
+            "Mennyi időd van ma filmre? (90 / 120 / 150 / 180 perc)",
             ["90 perc", "120 perc", "150 perc", "180 perc vagy több"]
         ),
         "brain": (
-            "Mennyire szeretnél gondolkodni? Pihenni akarsz, vagy kíváncsi vagy egy jó csavarra?",
-            ["Agykikapcsolos", "Kozepes", "Elgondolkodtato"]
+            "Mennyire legyen elgondolkodtató a film? (könnyű / közepes / elgondolkodtató)",
+            ["Könnyű", "Közepes", "Elgondolkodtató"]
         ),
     }
     return dispatch.get(missing[0], ("Rendben.", []))
@@ -1253,6 +1267,7 @@ def api_chat():
         "ujra dobas":         lambda: p.update({"ready": True}),
         # Kor választók
         "friss (2015 után)":              lambda: p.update({"era": "recent"}),
+        "régi (1980 előtt)":              lambda: p.update({"era": "old"}),
         "friss film (2015 utáni)":        lambda: p.update({"era": "recent"}),
         "modern (2000-2015)":             lambda: p.update({"era": "new"}),
         "klasszikus (1980-2000)":         lambda: p.update({"era": "classic"}),
@@ -1271,23 +1286,38 @@ def api_chat():
         "felemelo":    lambda: p.update({"mood": "felemelo"}),
         "vicces":      lambda: p.update({"mood": "vicces"}),
         # Brain gombok
-        "agykikapcsolos":      lambda: p.update({"brain": "konnyu"}),
-        "kozepes":             lambda: p.update({"brain": "kozepes"}),
-        "elgondolkodtato":     lambda: p.update({"brain": "elgondolkodtato"}),
+        "könnyű":              lambda: p.update({"brain": "konnyu"}),
+        "közepes":             lambda: p.update({"brain": "kozepes"}),
+        "elgondolkodtató":     lambda: p.update({"brain": "elgondolkodtato"}),
         # Idő gombok
         "90 perc":              lambda: p.update({"time": 90}),
         "120 perc":             lambda: p.update({"time": 120}),
         "150 perc":             lambda: p.update({"time": 150}),
         "180 perc vagy több":   lambda: p.update({"time": 180}),
-        # Társaság gombok → extra kulcsszóba kerülnek
-        "egyedül":              lambda: p.update({"extra": (p.get("extra","")+" egyedül drama").strip()}),
-        "párban":               lambda: p.update({"extra": (p.get("extra","")+" romance love").strip()}),
-        "barátokkal":           lambda: p.update({"extra": (p.get("extra","")+" comedy fun action").strip()}),
-        "családdal":            lambda: p.update({"extra": (p.get("extra","")+" family animation").strip()}),
-        # Befejezés gombok
-        "boldog befejezés":     lambda: p.update({"extra": (p.get("extra","")+" happy ending feel-good").strip()}),
-        "nyitott vég":          lambda: p.update({"extra": (p.get("extra","")+" open ending drama").strip()}),
-        "csavaros befejezés":   lambda: p.update({"extra": (p.get("extra","")+" twist ending mystery").strip()}),
+        # Stílus gombok
+        "valós történeten alapul":  lambda: p.update({"extra": (p.get("extra","")+" true story biography real").strip()}),
+        "sci-fi / fantasy világ":   lambda: p.update({"extra": (p.get("extra","")+" sci-fi fantasy").strip()}),
+        "mindennapi élet":          lambda: p.update({"extra": (p.get("extra","")+" drama everyday life").strip()}),
+        "természetfeletti":         lambda: p.update({"extra": (p.get("extra","")+" supernatural mystery horror").strip()}),
+        # Intenzitás gombok
+        "enyhén sötét, nem ijeszt":                     lambda: p.update({"extra": (p.get("extra","")+" mystery thriller mild").strip()}),
+        "közepes — feszült de nem horror":               lambda: p.update({"extra": (p.get("extra","")+" thriller suspense").strip()}),
+        "igazán durva és nyomasztó":                     lambda: p.update({"extra": (p.get("extra","")+" horror dark disturbing brutal").strip()}),
+        "tiszta akció, minimális vér":                   lambda: p.update({"extra": (p.get("extra","")+" action adventure clean").strip()}),
+        "közepes — van némi brutalitás":                 lambda: p.update({"extra": (p.get("extra","")+" action crime thriller").strip()}),
+        "brutális és nyers":                             lambda: p.update({"extra": (p.get("extra","")+" brutal raw violence gritty").strip()}),
+        "ártatlan, mindenki nevet":                      lambda: p.update({"extra": (p.get("extra","")+" family comedy fun").strip()}),
+        "fekete humor, csípős poénok":                   lambda: p.update({"extra": (p.get("extra","")+" dark comedy satire").strip()}),
+        "abszurd és őrült":                              lambda: p.update({"extra": (p.get("extra","")+" absurd comedy quirky").strip()}),
+        "kicsit megható, de nem sírok":                  lambda: p.update({"extra": (p.get("extra","")+" drama inspiring uplifting").strip()}),
+        "erősen érzelmes, könnyeket csal":               lambda: p.update({"extra": (p.get("extra","")+" emotional tearjerker drama").strip()}),
+        "inkább inspiráló mint érzelmes":                lambda: p.update({"extra": (p.get("extra","")+" inspiring motivating triumph").strip()}),
+        "csak egy kis szerelem mellékesen":              lambda: p.update({"extra": (p.get("extra","")+" romance subplot").strip()}),
+        "erős románc legyen a középpontban":             lambda: p.update({"extra": (p.get("extra","")+" romance love story").strip()}),
+        "inkább emberi kapcsolatok legyenek a középpontban": lambda: p.update({"extra": (p.get("extra","")+" relationships drama friendship").strip()}),
+        "édes és boldog szerelem":                       lambda: p.update({"extra": (p.get("extra","")+" romance happy love sweet").strip()}),
+        "drámai és tragikus románc":                     lambda: p.update({"extra": (p.get("extra","")+" tragic romance drama").strip()}),
+        "bonyolult kapcsolat sok fordulattal":           lambda: p.update({"extra": (p.get("extra","")+" complex relationship drama twist").strip()}),
     }
     if low in _BUTTON_ACTIONS:
         _BUTTON_ACTIONS[low]()
@@ -1722,11 +1752,11 @@ body{
     </div>
     <div class="card-body" style="padding:12px 14px">
       <div class="chat-box" id="chat-box"></div>
-      <div class="input-row">
+      <div class="chips" id="chips" style="margin-top:10px"></div>
+      <div class="input-row" style="margin-top:10px">
         <input class="chat-input" id="inp" placeholder="Írj valamit..." autocomplete="off"/>
         <button class="btn" id="btn-send" style="padding:9px 16px;border-radius:12px">➤</button>
       </div>
-      <div class="chips" id="chips" style="margin-top:10px"></div>
       <div class="mood-grid" id="mood-grid" style="margin-top:14px;gap:6px">
         <button class="mood-btn" data-mood="porgos"><span class="emoji">⚡</span><span class="label">Pörgős</span></button>
         <button class="mood-btn" data-mood="nyugis"><span class="emoji">😌</span><span class="label">Nyugis</span></button>
