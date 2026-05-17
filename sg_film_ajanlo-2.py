@@ -852,7 +852,7 @@ def _exchange_code(code: str) -> Optional[Dict[str, Any]]:
         )
         with _ureq.urlopen(req2, timeout=10) as resp2:
             return _json.loads(resp2.read())
-        except Exception as exc:
+except Exception as exc:
         log.warning("Google OAuth exchange failed: %s", exc)
         return None
  
