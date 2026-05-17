@@ -1233,10 +1233,11 @@ def api_chat():
         low = user_msg.lower()
 
         if not user_msg:
-            q, quick = next_question(p)
+            # Belépéskor ne induljon el automatikusan a kérdéssor.
+            # Csak egy rövid köszönés jelenjen meg.
             session["profile"] = p
             session.modified = True
-            return jsonify({"assistant": q, "quick_replies": quick, "profile": p})
+            return jsonify({"assistant": "Szia.", "quick_replies": [], "profile": p})
 
         if low in _RESET_CMDS:
             session["profile"] = default_profile()
@@ -2149,7 +2150,7 @@ async function loadMore(){
     }
     const pl=document.getElementById('pill-loaded');if(pl)pl.textContent=(data.total||0)+' film';
     if(data.ok === false && data.message){
-      addMsg('SG', data.message);
+      console.warn('Recs API fallback:', data.message);
     }
     const items = data.items||[];
     if(!items.length){
@@ -2189,12 +2190,13 @@ async function send(){
     typing.remove();
 
     if(!res.ok){
-      addMsg('SG', data.assistant || ('Szerverhiba történt. HTTP: '+res.status));
       console.error('Chat API error:', data);
       return;
     }
 
-    addMsg('SG',data.assistant||'…');
+    if(data.assistant){
+      addMsg('SG', data.assistant);
+    }
     setChips(data.quick_replies||[]);
     const prof=data.profile||{};
     if(prof.mood)  state.mood  = prof.mood;
@@ -2212,14 +2214,12 @@ async function send(){
       try{
         await loadMore();
       }catch(loadErr){
-        addMsg('SG','A kérdések rendben lefutottak. MVP módban próbálok ajánlani, de most nem jött vissza találat. Nyomj Resetet vagy válassz más hangulatot.');
-        console.error(loadErr);
+        console.error('loadMore after ready:', loadErr);
       }
     }
   }catch(e){
     if(typing && typing.remove) typing.remove();
-    addMsg('SG','MVP módban futok tovább, de a chat válasz most nem érkezett meg rendesen. Nyomj Resetet, majd próbáld újra. Ha ez Renderen történik, az Environment résznél később csak az OPENAI_API_KEY kulcsot kell hozzáadnod az AI módhoz.');
-    console.error(e);
+    console.error('send error:', e);
   }
 }
  
@@ -2271,20 +2271,10 @@ async function loadUser(){
  
 /* ── Init ── */
 async function startChat(){
-  try{
-    const res = await fetch('/api/chat',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:''}),
-    });
-    const data = await res.json();
-    addMsg('SG', data.assistant || 'Szia! Milyen hangulatban vagy ma este?');
-    setChips(data.quick_replies || ['Pörgős','Nyugis','Sötét','Felemelő','Vicces','Romantikus']);
-  }catch(e){
-    addMsg('SG','Szia! Milyen hangulatban vagy ma este? (pörgős / nyugis / sötét / felemelő / vicces / romantikus)');
-    setChips(['Pörgős','Nyugis','Sötét','Felemelő','Vicces','Romantikus']);
-    console.error('startChat error:', e);
-  }
+  // Belépéskor csak köszönünk.
+  // A kérdéssor csak akkor indul el, amikor a felhasználó ír valamit.
+  addMsg('SG','Szia.');
+  setChips([]);
 }
 loadUser();
 startChat();
