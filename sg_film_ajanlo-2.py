@@ -2215,7 +2215,7 @@ async function send(){
     }
   }catch(e){
     typing.remove();
-    addMsg('SG','⚠ Hálózati hiba. Próbáld újra.');
+    console.error('Hálózati hiba');
     console.error(e);
   }
 }
