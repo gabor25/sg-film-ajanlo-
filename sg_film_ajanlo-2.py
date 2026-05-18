@@ -696,7 +696,7 @@ def rank_movies(mood: str, time_limit: int, brain: str, extra: str, offset: int,
 # Session profile helpers
 # ---------------------------------------------------------------------------
 def default_profile() -> Dict[str, Any]:
-    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "style_asked": False, "emotion_asked": False}
+    return {"time": None, "mood": None, "brain": None, "extra": "", "ready": False, "history": [], "era": "all", "era_asked": False, "emotion_asked": False}
  
 def get_profile() -> Dict[str, Any]:
     p = session.get("profile")
@@ -714,22 +714,22 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
     # 1. kérdés: hangulat
     if "mood" in missing:
         return (
-            "Milyen hangulatban vagy ma este? (pörgős / nyugis / sötét / felemelő / vicces / romantikus)",
-            ["Pörgős", "Nyugis", "Sötét", "Felemelő", "Vicces", "Romantikus"],
+            "Milyen hangulatban vagy ma este?",
+            ["Pörgős (akció, feszültség)", "Nyugis (laza, chill)", "Sötét (thriller, horror)", "Felemelő (inspiráló, dráma)", "Vicces (komédia, humor)", "Romantikus (szerelem, érzelem)"],
         )
  
     # 2. kérdés: idő
     if "time" in missing:
         return (
-            "Mennyi időd van ma filmre? (90 / 120 / 150 / 180 perc)",
-            ["90 perc", "120 perc", "150 perc", "180 perc"],
+            "Mennyi időd van ma filmre?",
+            ["90 perc (rövid)", "120 perc (közepes)", "150 perc (hosszabb)", "180 perc (epikus)"],
         )
  
     # 3. kérdés: mennyire elgondolkodtató
     if "brain" in missing:
         return (
-            "Mennyire legyen elgondolkodtató a film?",
-            ["Könnyű", "Közepes", "Elgondolkodtató"],
+            "Mennyire legyen elgondolkodtató?",
+            ["Könnyű (kikapcsolódás)", "Közepes (kis csavar)", "Elgondolkodtató (mély, összetett)"],
         )
  
     # 4. kérdés: korszak
@@ -753,13 +753,15 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
                          ["Ártatlan, mindenki nevet", "Fekete humor, csípős poénok", "Abszurd és őrült", "Mindegy"]),
             "felemelo": ("Mennyire legyen érzelmes?",
                          ["Kicsit megható, de nem sírok", "Erősen érzelmes, könnyeket csal", "Inkább inspiráló mint érzelmes", "Mindegy"]),
-            "nyugis":   ("Mennyire legyen romantikus?",
-                         ["Csak egy kis szerelem mellékesen", "Erős románc legyen a középpontban", "Inkább emberi kapcsolatok legyenek a középpontban", "Mindegy"]),
+            "nyugis":   ("Milyen hangulatú legyen a film?",
+                         ["Vidám és szórakoztató", "Szívmelengető és meghitt", "Kalandos de könnyed", "Mindegy"]),
             "romantic": ("Milyen románcot szeretnél?",
                          ["Édes és boldog szerelem", "Drámai és tragikus románc", "Bonyolult kapcsolat sok fordulattal", "Mindegy"]),
         }
-        q, opts = questions.get(mood, ("Mennyire legyen intenzív a film?",
-                                       ["Enyhe és könnyű", "Közepes intenzitású", "Nagyon intenzív és erős", "Mindegy"]))
+        q, opts = questions.get(mood, (
+            "Mennyire legyen intenzív a film?",
+            ["Enyhe és könnyű", "Közepes intenzitású", "Nagyon intenzív és erős", "Mindegy"]
+        ))
         return (q, opts)
  
     # Mind az 5 kérdés kész → filmdobás
@@ -1246,12 +1248,16 @@ def api_chat():
         "közepes":          lambda: p.update({"brain": "kozepes"}),
         "elgondolkodtató":  lambda: p.update({"brain": "elgondolkodtato"}),
         # Korszak
-        "friss (2015-2025)":        lambda: p.update({"era": "recent"}),
-        "modern (2000-2015)":       lambda: p.update({"era": "new"}),
-        "klasszikus (1980-2000)":   lambda: p.update({"era": "classic"}),
-        "régi (1980 előtt)":        lambda: p.update({"era": "old"}),
-        "mindegy":                  lambda: p.update({"era": "all"}),
+        "friss (2015-2025)":        lambda: p.update({"era": "recent", "era_asked": True}),
+        "modern (2000-2015)":       lambda: p.update({"era": "new",    "era_asked": True}),
+        "klasszikus (1980-2000)":   lambda: p.update({"era": "classic","era_asked": True}),
+        "régi (1980 előtt)":        lambda: p.update({"era": "old",    "era_asked": True}),
+        "mindegy":                  lambda: p.update({"era": "all",    "era_asked": True}),
         # 5. kérdés — intenzitás válaszok
+        # nyugis hangulat válaszai
+        "vidám és szórakoztató":        lambda: add_extra("comedy fun entertainment light"),
+        "szívmelengető és meghitt":     lambda: add_extra("heartwarming feel-good friendship"),
+        "kalandos de könnyed":          lambda: add_extra("adventure light fun family"),
         "enyhén sötét, nem ijeszt":         lambda: add_extra("mystery thriller mild"),
         "közepes — feszült de nem horror":  lambda: add_extra("thriller suspense"),
         "igazán durva és nyomasztó":        lambda: add_extra("horror dark disturbing brutal"),
