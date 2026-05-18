@@ -279,7 +279,7 @@ MOOD_SYNONYMS: Dict[str, List[str]] = {
 }
  
 BRAIN_SYNONYMS: Dict[str, List[str]] = {
-    "konnyu":           ["könny", "konny", "laza", "agykikapcs", "nem akarok gondolkodni", "egyszerű", "egyszeru"],
+    "konnyu":           ["könny", "konny", "könnyű", "laza", "agykikapcs", "nem akarok gondolkodni", "egyszerű", "egyszeru"],
     "kozepes":          ["közep", "kozep", "normál", "normal"],
     "elgondolkodtato":  ["elgondolk", "agyas", "agyal", "csavaros", "pszich", "bonyolult", "twist"],
 }
@@ -715,8 +715,8 @@ def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
         if not p.get("era_asked"):
             p["era_asked"] = True
             return (
-                "Melyik korszakból szeretnél filmet nézni?",
-                ["Friss (2015 után)", "Modern (2000-2015)", "Klasszikus (1980-2000)", "Régi (1980 előtt)", "Mindegy"],
+                "Melyik korszakból szeretnél filmet nézni? (friss / modern / klasszikus / régi)",
+                ["Friss (2015-2025)", "Modern (2000-2015)", "Klasszikus (1980-2000)", "Régi (1980 előtt)", "Mindegy"],
             )
         # 5. kérdés: van-e kedvenc rendező vagy szereplő stílus
         if not p.get("style_asked"):
@@ -1352,9 +1352,7 @@ def api_chat():
     # Auto-activate ready when all profile fields filled
     # After emotion_asked (6th question), set ready automatically
     if not p.get("ready") and not missing_fields(p):
-        if p.get("emotion_asked"):
-            p["ready"] = True
-        elif p.get("era_asked") and p.get("style_asked"):
+        if p.get("emotion_asked") or p.get("era_asked"):
             p["ready"] = True
  
     # Build reply text
