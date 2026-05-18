@@ -710,75 +710,61 @@ def missing_fields(p: Dict[str, Any]) -> List[str]:
  
 def next_question(p: Dict[str, Any]) -> Tuple[str, List[str]]:
     missing = missing_fields(p)
-    if not missing:
-        # 4. kérdés: kor
-        if not p.get("era_asked"):
-            p["era_asked"] = True
-            return (
-                "Melyik korszakból szeretnél filmet nézni? (friss / modern / klasszikus / régi)",
-                ["Friss (2015-2025)", "Modern (2000-2015)", "Klasszikus (1980-2000)", "Régi (1980 előtt)", "Mindegy"],
-            )
-        # 5. kérdés: van-e kedvenc rendező vagy szereplő stílus
-        if not p.get("style_asked"):
-            p["style_asked"] = True
-            return (
-                "Milyen stílusú filmet szeretnél?",
-                ["Valós történeten alapul", "Sci-fi / fantasy világ", "Mindennapi élet", "Természetfeletti", "Mindegy"],
-            )
-        # 6. kérdés: hangulat alapján személyre szabott
-        if not p.get("emotion_asked"):
-            p["emotion_asked"] = True
-            mood = p.get("mood", "")
-            intensity_map = {
-                "sotet": (
-                    "Mennyire legyen durva és intenzív?",
-                    ["Enyhén sötét, nem ijeszt", "Közepes — feszült de nem horror", "Igazán durva és nyomasztó", "Mindegy"]
-                ),
-                "porgos": (
-                    "Mennyire legyen brutális az akció?",
-                    ["Tiszta akció, minimális vér", "Közepes — van némi brutalitás", "Brutális és nyers", "Mindegy"]
-                ),
-                "vicces": (
-                    "Milyen humor illik most hozzád?",
-                    ["Ártatlan, mindenki nevet", "Fekete humor, csípős poénok", "Abszurd és őrült", "Mindegy"]
-                ),
-                "felemelo": (
-                    "Mennyire legyen érzelmes?",
-                    ["Kicsit megható, de nem sírok", "Erősen érzelmes, könnyeket csal", "Inkább inspiráló mint érzelmes", "Mindegy"]
-                ),
-                "nyugis": (
-                    "Mennyire legyen romantikus?",
-                    ["Csak egy kis szerelem mellékesen", "Erős románc legyen a középpontban", "Inkább emberi kapcsolatok legyenek a középpontban", "Mindegy"]
-                ),
-                "romantic": (
-                    "Milyen románcot szeretnél?",
-                    ["Édes és boldog szerelem", "Drámai és tragikus románc", "Bonyolult kapcsolat sok fordulattal", "Mindegy"]
-                ),
-            }
-            q, opts = intensity_map.get(mood, (
-                "Mennyire legyen intenzív a film?",
-                ["Enyhe és könnyű", "Közepes intenzitású", "Nagyon intenzív és erős", "Mindegy"]
-            ))
-            return (q, opts)
+ 
+    # 1. kérdés: hangulat
+    if "mood" in missing:
         return (
-            "Tökéletes, minden megvan. Jönnek a filmek.",
-            ["Ajánlj most", "Reset"],
-        )
-    dispatch = {
-        "mood":  (
             "Milyen hangulatban vagy ma este? (pörgős / nyugis / sötét / felemelő / vicces / romantikus)",
-            ["Porgos", "Nyugis", "Sotet", "Felemelo", "Vicces", "Romantikus"]
-        ),
-        "time":  (
+            ["Pörgős", "Nyugis", "Sötét", "Felemelő", "Vicces", "Romantikus"],
+        )
+ 
+    # 2. kérdés: idő
+    if "time" in missing:
+        return (
             "Mennyi időd van ma filmre? (90 / 120 / 150 / 180 perc)",
-            ["90 perc", "120 perc", "150 perc", "180 perc vagy több"]
-        ),
-        "brain": (
-            "Mennyire legyen elgondolkodtató a film? (könnyű / közepes / elgondolkodtató)",
-            ["Könnyű", "Közepes", "Elgondolkodtató"]
-        ),
-    }
-    return dispatch.get(missing[0], ("Rendben.", []))
+            ["90 perc", "120 perc", "150 perc", "180 perc"],
+        )
+ 
+    # 3. kérdés: mennyire elgondolkodtató
+    if "brain" in missing:
+        return (
+            "Mennyire legyen elgondolkodtató a film?",
+            ["Könnyű", "Közepes", "Elgondolkodtató"],
+        )
+ 
+    # 4. kérdés: korszak
+    if not p.get("era_asked"):
+        p["era_asked"] = True
+        return (
+            "Melyik korszakból szeretnél filmet nézni?",
+            ["Friss (2015-2025)", "Modern (2000-2015)", "Klasszikus (1980-2000)", "Régi (1980 előtt)", "Mindegy"],
+        )
+ 
+    # 5. kérdés: hangulat alapján személyre szabott
+    if not p.get("emotion_asked"):
+        p["emotion_asked"] = True
+        mood = p.get("mood", "")
+        questions = {
+            "sotet":    ("Mennyire legyen durva és intenzív?",
+                         ["Enyhén sötét, nem ijeszt", "Közepes — feszült de nem horror", "Igazán durva és nyomasztó", "Mindegy"]),
+            "porgos":   ("Mennyire legyen brutális az akció?",
+                         ["Tiszta akció, minimális vér", "Közepes — van némi brutalitás", "Brutális és nyers", "Mindegy"]),
+            "vicces":   ("Milyen humor illik most hozzád?",
+                         ["Ártatlan, mindenki nevet", "Fekete humor, csípős poénok", "Abszurd és őrült", "Mindegy"]),
+            "felemelo": ("Mennyire legyen érzelmes?",
+                         ["Kicsit megható, de nem sírok", "Erősen érzelmes, könnyeket csal", "Inkább inspiráló mint érzelmes", "Mindegy"]),
+            "nyugis":   ("Mennyire legyen romantikus?",
+                         ["Csak egy kis szerelem mellékesen", "Erős románc legyen a középpontban", "Inkább emberi kapcsolatok legyenek a középpontban", "Mindegy"]),
+            "romantic": ("Milyen románcot szeretnél?",
+                         ["Édes és boldog szerelem", "Drámai és tragikus románc", "Bonyolult kapcsolat sok fordulattal", "Mindegy"]),
+        }
+        q, opts = questions.get(mood, ("Mennyire legyen intenzív a film?",
+                                       ["Enyhe és könnyű", "Közepes intenzitású", "Nagyon intenzív és erős", "Mindegy"]))
+        return (q, opts)
+ 
+    # Mind az 5 kérdés kész → filmdobás
+    return ("Tökéletes, minden megvan. Jönnek a filmek.", [])
+ 
  
 # ---------------------------------------------------------------------------
 # Optional OpenAI chat reply
@@ -1206,182 +1192,135 @@ def api_recs():
 # ---------------------------------------------------------------------------
 @app.post("/api/chat")
 def api_chat():
-    body = request.get_json(force=True, silent=True) or {}
+    body     = request.get_json(force=True, silent=True) or {}
     user_msg = str(body.get("message") or "").strip()
-    p = get_profile()
-    low = user_msg.lower()
+    p        = get_profile()
+    low      = user_msg.lower().strip()
  
-    if not user_msg:
-        q, quick = next_question(p)
-        return jsonify({"assistant": q, "quick_replies": quick, "profile": p})
- 
-    # Reset
-    if low in _RESET_CMDS:
+    # ── Reset ──
+    if low in _RESET_CMDS or low == "reset":
         session["profile"] = default_profile()
         p = get_profile()
         q, quick = next_question(p)
-        return jsonify({"assistant": "Oké, tiszta lap. 🙂 " + q, "quick_replies": quick, "profile": p})
+        session["profile"] = p
+        return jsonify({"assistant": "Oké, tiszta lap. " + q, "quick_replies": quick, "profile": p})
  
-    # Közvetlen mood beállítás a gombokból
-    if user_msg.startswith('__mood__'):
-        mood_val = user_msg[8:].strip()
-        valid_moods = {"porgos","nyugis","sotet","felemelo","vicces","romantic"}
-        if mood_val in valid_moods:
-            p["mood"] = mood_val
-            if not p.get("ready") and not missing_fields(p):
-                p["ready"] = True
-            session["profile"] = p
-            mood_names = {
-                "porgos":   "Pörgős akció hangulat",
-                "nyugis":   "Nyugis, chill hangulat",
-                "sotet":    "Sötét, feszült hangulat",
-                "felemelo": "Felemelő, motiváló hangulat",
-                "vicces":   "Vicces, könnyed hangulat",
-                "romantic": "Romantikus hangulat",
-            }
-            ai_text = mood_names.get(mood_val, mood_val) + " — keresem a legjobb filmeket! 🎬"
-            _, quick = next_question(p) if missing_fields(p) else (
-                None, ["Ajánlj","Újra dobás","Rövidebb","Reset"]
-            )
-            return jsonify({"assistant": ai_text, "quick_replies": quick, "profile": p})
- 
-    # Greeting → always reset and re-ask
+    # ── Greeting ──
     if low in _GREETINGS:
         session["profile"] = default_profile()
         p = get_profile()
         q, quick = next_question(p)
-        return jsonify({"assistant": "Szia 🙂 " + q, "quick_replies": quick, "profile": p})
+        session["profile"] = p
+        return jsonify({"assistant": "Szia! " + q, "quick_replies": quick, "profile": p})
  
-    # Quick action buttons
-    _BUTTON_ACTIONS: Dict[str, Any] = {
-        "sötétebb":           lambda: p.update({"mood": "sotet"}),
-        "sotetebb":           lambda: p.update({"mood": "sotet"}),
-        "viccesebb":          lambda: p.update({"mood": "vicces"}),
-        "rövidebb":           lambda: p.update({"time": 90}),
-        "rovidebb":           lambda: p.update({"time": 90}),
-        "ajánlj":             lambda: p.update({"ready": True}),
-        "ajanlj":             lambda: p.update({"ready": True}),
-        "ajánlj most!":       lambda: p.update({"ready": True}),
-        "romantikus":         lambda: p.update({"mood": "romantic"}),
-        "újra dobás":         lambda: p.update({"ready": True}),
-        "ujra dobas":         lambda: p.update({"ready": True}),
-        # Kor választók
-        "friss (2015 után)":              lambda: p.update({"era": "recent"}),
-        "régi (1980 előtt)":              lambda: p.update({"era": "old"}),
-        "friss film (2015 utáni)":        lambda: p.update({"era": "recent"}),
-        "modern (2000-2015)":             lambda: p.update({"era": "new"}),
-        "klasszikus (1980-2000)":         lambda: p.update({"era": "classic"}),
-        "régi klasszikus (1980 előtt)":   lambda: p.update({"era": "old"}),
-        "mindegy":                        lambda: p.update({"era": "all"}),
-        "mindegy, lepj meg":              lambda: p.update({"era": "all", "ready": True}),
-        "lepj meg":                       lambda: p.update({"ready": True}),
-        "meglepetés legyen":              lambda: p.update({"ready": True}),
-        "ajánlj most":                    lambda: p.update({"ready": True}),
-        "ajánlj most!":                   lambda: p.update({"ready": True}),
-        "ujra dobas":                     lambda: p.update({"ready": True}),
-        # Hangulat gombok
-        "porgos":      lambda: p.update({"mood": "porgos"}),
-        "nyugis":      lambda: p.update({"mood": "nyugis"}),
-        "sotet":       lambda: p.update({"mood": "sotet"}),
-        "felemelo":    lambda: p.update({"mood": "felemelo"}),
-        "vicces":      lambda: p.update({"mood": "vicces"}),
-        # Brain gombok
-        "könnyű":              lambda: p.update({"brain": "konnyu"}),
-        "közepes":             lambda: p.update({"brain": "kozepes"}),
-        "elgondolkodtató":     lambda: p.update({"brain": "elgondolkodtato"}),
-        # Idő gombok
+    # ── Üres üzenet ──
+    if not user_msg:
+        q, quick = next_question(p)
+        session["profile"] = p
+        return jsonify({"assistant": q, "quick_replies": quick, "profile": p})
+ 
+    def add_extra(words):
+        merged = (p.get("extra", "") + " " + words).strip()
+        p["extra"] = merged[:240]
+ 
+    # ── Gomb akciók ──
+    ACTIONS = {
+        # Hangulat
+        "pörgős":    lambda: p.update({"mood": "porgos"}),
+        "porgos":    lambda: p.update({"mood": "porgos"}),
+        "nyugis":    lambda: p.update({"mood": "nyugis"}),
+        "sötét":     lambda: p.update({"mood": "sotet"}),
+        "sotet":     lambda: p.update({"mood": "sotet"}),
+        "felemelő":  lambda: p.update({"mood": "felemelo"}),
+        "felemelo":  lambda: p.update({"mood": "felemelo"}),
+        "vicces":    lambda: p.update({"mood": "vicces"}),
+        "romantikus":lambda: p.update({"mood": "romantic"}),
+        # Idő
         "90 perc":              lambda: p.update({"time": 90}),
         "120 perc":             lambda: p.update({"time": 120}),
         "150 perc":             lambda: p.update({"time": 150}),
+        "180 perc":             lambda: p.update({"time": 180}),
         "180 perc vagy több":   lambda: p.update({"time": 180}),
-        # Stílus gombok
-        "valós történeten alapul":  lambda: p.update({"extra": (p.get("extra","")+" true story biography real").strip()}),
-        "sci-fi / fantasy világ":   lambda: p.update({"extra": (p.get("extra","")+" sci-fi fantasy").strip()}),
-        "mindennapi élet":          lambda: p.update({"extra": (p.get("extra","")+" drama everyday life").strip()}),
-        "természetfeletti":         lambda: p.update({"extra": (p.get("extra","")+" supernatural mystery horror").strip()}),
-        # Intenzitás gombok
-        "enyhén sötét, nem ijeszt":                     lambda: p.update({"extra": (p.get("extra","")+" mystery thriller mild").strip()}),
-        "közepes — feszült de nem horror":               lambda: p.update({"extra": (p.get("extra","")+" thriller suspense").strip()}),
-        "igazán durva és nyomasztó":                     lambda: p.update({"extra": (p.get("extra","")+" horror dark disturbing brutal").strip()}),
-        "tiszta akció, minimális vér":                   lambda: p.update({"extra": (p.get("extra","")+" action adventure clean").strip()}),
-        "közepes — van némi brutalitás":                 lambda: p.update({"extra": (p.get("extra","")+" action crime thriller").strip()}),
-        "brutális és nyers":                             lambda: p.update({"extra": (p.get("extra","")+" brutal raw violence gritty").strip()}),
-        "ártatlan, mindenki nevet":                      lambda: p.update({"extra": (p.get("extra","")+" family comedy fun").strip()}),
-        "fekete humor, csípős poénok":                   lambda: p.update({"extra": (p.get("extra","")+" dark comedy satire").strip()}),
-        "abszurd és őrült":                              lambda: p.update({"extra": (p.get("extra","")+" absurd comedy quirky").strip()}),
-        "kicsit megható, de nem sírok":                  lambda: p.update({"extra": (p.get("extra","")+" drama inspiring uplifting").strip()}),
-        "erősen érzelmes, könnyeket csal":               lambda: p.update({"extra": (p.get("extra","")+" emotional tearjerker drama").strip()}),
-        "inkább inspiráló mint érzelmes":                lambda: p.update({"extra": (p.get("extra","")+" inspiring motivating triumph").strip()}),
-        "csak egy kis szerelem mellékesen":              lambda: p.update({"extra": (p.get("extra","")+" romance subplot").strip()}),
-        "erős románc legyen a középpontban":             lambda: p.update({"extra": (p.get("extra","")+" romance love story").strip()}),
-        "inkább emberi kapcsolatok legyenek a középpontban": lambda: p.update({"extra": (p.get("extra","")+" relationships drama friendship").strip()}),
-        "édes és boldog szerelem":                       lambda: p.update({"extra": (p.get("extra","")+" romance happy love sweet").strip()}),
-        "drámai és tragikus románc":                     lambda: p.update({"extra": (p.get("extra","")+" tragic romance drama").strip()}),
-        "bonyolult kapcsolat sok fordulattal":           lambda: p.update({"extra": (p.get("extra","")+" complex relationship drama twist").strip()}),
+        # Brain
+        "könnyű":           lambda: p.update({"brain": "konnyu"}),
+        "közepes":          lambda: p.update({"brain": "kozepes"}),
+        "elgondolkodtató":  lambda: p.update({"brain": "elgondolkodtato"}),
+        # Korszak
+        "friss (2015-2025)":        lambda: p.update({"era": "recent"}),
+        "modern (2000-2015)":       lambda: p.update({"era": "new"}),
+        "klasszikus (1980-2000)":   lambda: p.update({"era": "classic"}),
+        "régi (1980 előtt)":        lambda: p.update({"era": "old"}),
+        "mindegy":                  lambda: p.update({"era": "all"}),
+        # 5. kérdés — intenzitás válaszok
+        "enyhén sötét, nem ijeszt":         lambda: add_extra("mystery thriller mild"),
+        "közepes — feszült de nem horror":  lambda: add_extra("thriller suspense"),
+        "igazán durva és nyomasztó":        lambda: add_extra("horror dark disturbing brutal"),
+        "tiszta akció, minimális vér":      lambda: add_extra("action adventure clean"),
+        "közepes — van némi brutalitás":    lambda: add_extra("action crime thriller"),
+        "brutális és nyers":                lambda: add_extra("brutal raw violence gritty"),
+        "ártatlan, mindenki nevet":         lambda: add_extra("family comedy fun"),
+        "fekete humor, csípős poénok":      lambda: add_extra("dark comedy satire"),
+        "abszurd és őrült":                 lambda: add_extra("absurd comedy quirky"),
+        "kicsit megható, de nem sírok":     lambda: add_extra("drama inspiring uplifting"),
+        "erősen érzelmes, könnyeket csal":  lambda: add_extra("emotional tearjerker drama"),
+        "inkább inspiráló mint érzelmes":   lambda: add_extra("inspiring motivating triumph"),
+        "csak egy kis szerelem mellékesen": lambda: add_extra("romance subplot"),
+        "erős románc legyen a középpontban":lambda: add_extra("romance love story"),
+        "inkább emberi kapcsolatok legyenek a középpontban": lambda: add_extra("relationships drama friendship"),
+        "édes és boldog szerelem":          lambda: add_extra("romance happy love sweet"),
+        "drámai és tragikus románc":        lambda: add_extra("tragic romance drama"),
+        "bonyolult kapcsolat sok fordulattal": lambda: add_extra("complex relationship drama twist"),
+        "enyhe és könnyű":                  lambda: add_extra("feel-good light comedy"),
+        "közepes intenzitású":              lambda: add_extra("drama thriller"),
+        "nagyon intenzív és erős":          lambda: add_extra("intense powerful drama"),
+        # Ajánlj gombok
+        "ajánlj most":  lambda: p.update({"ready": True}),
+        "ajánlj":       lambda: p.update({"ready": True}),
+        "ajanlj":       lambda: p.update({"ready": True}),
     }
-    if low in _BUTTON_ACTIONS:
-        _BUTTON_ACTIONS[low]()
  
-    # Offline NLU
-    time_val  = extract_time(user_msg)
-    mood_val  = extract_mood(user_msg)
-    brain_val = extract_brain(user_msg)
-    kw        = extract_keywords(user_msg)
+    if low in ACTIONS:
+        ACTIONS[low]()
+    else:
+        # NLU szövegértelmezés
+        time_val  = extract_time(user_msg)
+        mood_val  = extract_mood(user_msg)
+        brain_val = extract_brain(user_msg)
+        kw        = extract_keywords(user_msg)
+        nlu       = openai_nlu_profile(user_msg)
+        if nlu:
+            try:
+                if nlu.get("time") is not None:
+                    time_val = int(nlu["time"])
+            except (ValueError, TypeError):
+                pass
+            mood_val  = str(nlu["mood"]).strip()  if nlu.get("mood")  else mood_val
+            brain_val = str(nlu["brain"]).strip() if nlu.get("brain") else brain_val
+            kw        = str(nlu["q"]).strip()     if nlu.get("q")     else kw
+        if time_val:  p["time"]  = time_val
+        if mood_val:  p["mood"]  = mood_val
+        if brain_val: p["brain"] = brain_val
+        if kw and len(kw) >= 3:
+            add_extra(kw)
  
-    # Merge with optional OpenAI NLU
-    nlu = openai_nlu_profile(user_msg)
-    if nlu:
-        try:
-            if nlu.get("time") is not None:
-                time_val = int(nlu["time"])
-        except (ValueError, TypeError):
-            pass
-        mood_val  = str(nlu["mood"]).strip()  if nlu.get("mood")  else mood_val
-        brain_val = str(nlu["brain"]).strip() if nlu.get("brain") else brain_val
-        kw        = str(nlu["q"]).strip()     if nlu.get("q")     else kw
+    # ── Következő kérdés vagy filmdobás ──
+    q_text, quick = next_question(p)
  
-    if time_val:  p["time"]  = time_val
-    if mood_val:  p["mood"]  = mood_val
-    if brain_val: p["brain"] = brain_val
+    # Ha a next_question "Jönnek a filmek" üzenetet ad → filmdobás
+    if q_text.startswith("Tökéletes"):
+        p["ready"] = True
  
-    # Accumulate extra keywords
-    if kw and len(kw) >= 3:
-        merged = f"{p.get('extra', '')} {kw}".strip()
-        p["extra"] = merged[:240]
- 
-    # Auto-activate ready when all profile fields filled
-    # After emotion_asked (6th question), set ready automatically
-    if not p.get("ready") and not missing_fields(p):
-        if p.get("emotion_asked") or p.get("era_asked"):
-            p["ready"] = True
- 
-    # Build reply text
-    ai_text = openai_chat_reply(p, user_msg)
-    if not ai_text:
-        if missing_fields(p):
-            ai_text, _ = next_question(p)
-        else:
-            ai_text = (
-                f"Oké, érzem a vibe-ot. "
-                f"(hangulat: {p['mood']}, idő: {p['time']} perc, mód: {p['brain']}). "
-                f"Jobbra dobom a poszteres listát — nyomj 'Tölts még'-et is. :)"
-            )
- 
-    # Persist history (keep last 30 turns)
     hist = p.get("history") or []
     hist.extend([
         {"role": "user",      "content": user_msg},
-        {"role": "assistant", "content": ai_text},
+        {"role": "assistant", "content": q_text},
     ])
     p["history"] = hist[-30:]
     session["profile"] = p
+    session.modified   = True
  
-    _, quick = next_question(p) if missing_fields(p) else (
-        None,
-        ["Ajánlj", "Újra dobás", "Sötétebb", "Viccesebb", "Rövidebb", "Reset"],
-    )
+    return jsonify({"assistant": q_text, "quick_replies": quick, "profile": p})
  
-    return jsonify({"assistant": ai_text, "quick_replies": quick, "profile": p})
  
 # ---------------------------------------------------------------------------
 # API: /api/local_poster — helyi posters/ mappából szolgál ki képeket
