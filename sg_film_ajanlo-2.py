@@ -2152,8 +2152,11 @@ async function send(){
     state.ready=!!prof.ready;
     statusLine.textContent='mood='+state.mood+' · time≈'+state.time+'min · mód='+state.brain
       +(state.q?' · '+state.q.slice(0,25):'');
-    if(state.ready){
-      state.offset=0;posterStrip.innerHTML='';
+    // Filmdobás ha ready
+    if(prof.ready || state.ready){
+      state.ready = true;
+      state.offset = 0;
+      posterStrip.innerHTML = '';
       await loadMore();
     }
   }catch(e){
